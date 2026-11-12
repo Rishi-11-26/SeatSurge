@@ -2,13 +2,15 @@ import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import setup_logging, logger
 from app.redis.client import init_redis_pool, close_redis
 from app.db.session import engine
+from app.db.init_db import init_db
+from app.services.metrics_service import metrics_tracker
 from app.api.v1.router import api_v1_router
 from app.api.v1.endpoints.health import get_health
+from app.core.exceptions import register_exception_handlers
 
 
 @asynccontextmanager
@@ -21,6 +23,13 @@ async def lifespan(app: FastAPI):
         logger.info(f"Initialized Redis connection pool targeting {settings.REDIS_HOST}:{settings.REDIS_PORT}")
     except Exception as exc:
         logger.warning(f"Could not eagerly initialize Redis pool: {exc}")
+
+    # Database initialization & seeding
+    try:
+        await init_db(engine)
+        logger.info("Database initialization and seed verification complete.")
+    except Exception as exc:
+        logger.warning(f"Database initialization deferred (database may still be starting): {exc}")
 
     yield
 
@@ -40,6 +49,9 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+# Register custom exception handlers for structured error envelope (docs/api-contract.md)
+register_exception_handlers(app)
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +67,10 @@ async def add_process_time_and_instance_header(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     process_time = (time.perf_counter() - start_time) * 1000
+
+    # Record metrics for latency tracking
+    metrics_tracker.record_request(process_time)
+
     response.headers["X-Process-Time-Ms"] = f"{process_time:.2f}"
     response.headers["X-Backend-Instance"] = settings.INSTANCE_ID
     return response
@@ -70,6 +86,7 @@ async def root():
         "environment": settings.APP_ENV,
         "docs": "/docs",
         "health": "/health",
+        "metrics": f"{settings.API_V1_STR}/metrics",
     }
 
 

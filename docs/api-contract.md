@@ -12,26 +12,35 @@
 
 ### Request Headers
 - `Content-Type: application/json`
-- `X-Session-ID: <uuid>`: Client session identifier. Required for waiting room queueing, seat holds, and bot detection tracking.
+- `X-Session-ID: <uuid>`: Client session identifier. Required for waiting room queueing, seat holds, rate-limiting, and bot detection tracking.
 - `Idempotency-Key: <uuid>`: Required for hold creation and checkout calls to prevent duplicate charge / reservation actions on network retries.
 
 ### Standard Response Headers
-- `X-Backend-Instance: <backend-1|backend-2>`: Replicas handling the request.
+- `X-Backend-Instance: <backend-1|backend-2>`: Backend replica handling the request.
 - `X-Process-Time-Ms: <float>`: Server processing latency in milliseconds.
 
 ### Standard Error Schema (RFC 7807 inspired)
+All non-2xx HTTP responses from SeatSurge return a uniform JSON error envelope:
 ```json
 {
   "error": {
-    "code": "SEAT_ALREADY_HELD",
-    "message": "One or more requested seats are no longer available.",
-    "details": {
-      "conflicting_seats": [102, 103]
-    },
+    "code": "NOT_FOUND",
+    "message": "Event with ID 999 not found.",
+    "details": {},
     "timestamp": "2026-11-13T12:00:00Z"
   }
 }
 ```
+
+Common machine-readable error codes:
+- `BAD_REQUEST` (400)
+- `UNAUTHORIZED` (401)
+- `FORBIDDEN` (403)
+- `NOT_FOUND` (404)
+- `CONFLICT` (409) — e.g. seat already sold or held
+- `VALIDATION_ERROR` (422) — field validation errors included in `details.errors`
+- `RATE_LIMIT_EXCEEDED` (429) — header `Retry-After: <seconds>` included
+- `INTERNAL_SERVER_ERROR` (500)
 
 ---
 
@@ -47,11 +56,164 @@ Every seat has one of the following authoritative states:
 | `SOLD` | Persisted to PostgreSQL permanently | Read-only |
 | `RELEASED` | Hold expired or payment definitively declined | Reverts to `AVAILABLE` |
 
+### Booking Record Statuses (PostgreSQL)
+Permanent booking records in the `bookings` table track the full lifecycle:
+- `CONFIRMED`: Active, completed sale. Only one CONFIRMED booking per `(event_id, seat_id)` is permitted by database partial unique index.
+- `CANCELLED`: Previously booked seat was cancelled. Seat returns to `AVAILABLE` and can be booked again.
+- `REFUNDED`: Booking was refunded.
+
 ---
 
-## 3. Waiting Room & Virtual Queue
+## 3. Events Catalogue
 
-### 3.1. Enter Waiting Room / Queue Status
+### 3.1. List All Active Events
+- **Method:** `GET /api/v1/events`
+- **Response (200 OK):**
+```json
+{
+  "events": [
+    {
+      "id": 1,
+      "name": "YUKTIK 2026 Grand Concert",
+      "description": "YUKTIK 2026 flagship tech & music festival live concert.",
+      "venue_name": "YUKTIK Grand Auditorium",
+      "total_seats": 5040,
+      "start_time": "2026-11-20T18:30:00Z",
+      "is_active": true,
+      "created_at": "2026-11-13T12:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+### 3.2. Get Event Details
+- **Method:** `GET /api/v1/events/{event_id}`
+- **Response (200 OK):**
+```json
+{
+  "id": 1,
+  "name": "YUKTIK 2026 Grand Concert",
+  "description": "YUKTIK 2026 flagship tech & music festival live concert.",
+  "venue_name": "YUKTIK Grand Auditorium",
+  "total_seats": 5040,
+  "start_time": "2026-11-20T18:30:00Z",
+  "is_active": true,
+  "created_at": "2026-11-13T12:00:00Z"
+}
+```
+- **Error (404 Not Found):** `{"error": {"code": "NOT_FOUND", "message": "Event with ID 999 not found.", "details": {}, "timestamp": "..."}}`
+
+---
+
+## 4. Seat Catalog & Live Map
+
+### 4.1. Get Event Seat Map Snapshot (Paginated)
+- **Method:** `GET /api/v1/events/{event_id}/seats`
+- **Query Parameters:**
+  - `page` (int, default: 1): Page number (1-indexed).
+  - `page_size` (int, default: 100, max: 1000): Number of seats per page.
+  - `tier` (string, optional): Filter by tier (`VIP`, `PREMIUM`, `STANDARD`).
+  - `row` (string, optional): Filter by row letter (e.g. `A`, `E`, `AA`).
+- **Response (200 OK):**
+```json
+{
+  "event_id": 1,
+  "total_seats": 5040,
+  "sequence_number": 1,
+  "timestamp": "2026-11-13T12:00:00Z",
+  "page": 1,
+  "page_size": 100,
+  "total_pages": 51,
+  "seats": [
+    {
+      "seat_id": 1,
+      "event_id": 1,
+      "row": "A",
+      "number": 1,
+      "section": "Floor VIP",
+      "tier": "VIP",
+      "price_cents": 15000,
+      "is_accessible": true,
+      "status": "AVAILABLE"
+    },
+    {
+      "seat_id": 2,
+      "event_id": 1,
+      "row": "A",
+      "number": 2,
+      "section": "Floor VIP",
+      "tier": "VIP",
+      "price_cents": 15000,
+      "is_accessible": true,
+      "status": "HELD"
+    }
+  ]
+}
+```
+
+### 4.2. Get Single Seat Status
+- **Method:** `GET /api/v1/events/{event_id}/seats/{seat_id}`
+- **Response (200 OK):**
+```json
+{
+  "seat_id": 1,
+  "event_id": 1,
+  "row": "A",
+  "number": 1,
+  "section": "Floor VIP",
+  "tier": "VIP",
+  "price_cents": 15000,
+  "is_accessible": true,
+  "status": "AVAILABLE"
+}
+```
+
+### 4.3. Get High-Performance Availability Summary
+- **Method:** `GET /api/v1/events/{event_id}/availability`
+- **Response (200 OK):**
+```json
+{
+  "event_id": 1,
+  "total_seats": 5040,
+  "available_seats": 5040,
+  "held_seats": 0,
+  "sold_seats": 0,
+  "tiers": {
+    "VIP": {
+      "tier": "VIP",
+      "total": 240,
+      "available": 240,
+      "held": 0,
+      "sold": 0,
+      "price_cents": 15000
+    },
+    "PREMIUM": {
+      "tier": "PREMIUM",
+      "total": 1200,
+      "available": 1200,
+      "held": 0,
+      "sold": 0,
+      "price_cents": 10000
+    },
+    "STANDARD": {
+      "tier": "STANDARD",
+      "total": 3600,
+      "available": 3600,
+      "held": 0,
+      "sold": 0,
+      "price_cents": 5000
+    }
+  },
+  "timestamp": "2026-11-13T12:00:00Z"
+}
+```
+
+---
+
+## 5. Waiting Room & Virtual Queue (Phase 5)
+
+### 5.1. Enter Waiting Room / Queue Status
 - **Method:** `POST /api/v1/queue/enter`
 - **Headers:** `X-Session-ID: <uuid>`
 - **Request Body:**
@@ -60,7 +222,7 @@ Every seat has one of the following authoritative states:
   "event_id": 1
 }
 ```
-- **Response (200 OK):**
+- **Response when queued (200 OK):**
 ```json
 {
   "status": "WAITING",
@@ -84,43 +246,9 @@ Every seat has one of the following authoritative states:
 
 ---
 
-## 4. Seat Catalog & Live Map
+## 6. Atomic Seat Holds (Phase 2)
 
-### 4.1. Get Event Seat Map Snapshot
-- **Method:** `GET /api/v1/events/{event_id}/seats`
-- **Response (200 OK):**
-```json
-{
-  "event_id": 1,
-  "total_seats": 5040,
-  "sequence_number": 1042,
-  "timestamp": "2026-11-13T12:00:00Z",
-  "seats": [
-    {
-      "seat_id": 1,
-      "row": "A",
-      "number": 1,
-      "tier": "VIP",
-      "price_cents": 15000,
-      "status": "AVAILABLE"
-    },
-    {
-      "seat_id": 2,
-      "row": "A",
-      "number": 2,
-      "tier": "VIP",
-      "price_cents": 15000,
-      "status": "HELD"
-    }
-  ]
-}
-```
-
----
-
-## 5. Atomic Seat Holds
-
-### 5.1. Create Hold (Single or Group)
+### 6.1. Create Hold (Single or Group)
 - **Method:** `POST /api/v1/events/{event_id}/holds`
 - **Headers:**
   - `X-Session-ID: <uuid>`
@@ -151,9 +279,9 @@ Every seat has one of the following authoritative states:
 
 ---
 
-## 6. Checkout & Payment Simulator
+## 7. Checkout & Payment Simulator (Phase 6)
 
-### 6.1. Initiate Checkout
+### 7.1. Initiate Checkout
 - **Method:** `POST /api/v1/checkout/pay`
 - **Headers:**
   - `X-Session-ID: <uuid>`
@@ -180,7 +308,7 @@ Every seat has one of the following authoritative states:
 
 ---
 
-## 7. Real-Time WebSockets
+## 8. Real-Time WebSockets (Phase 3)
 
 - **Endpoint:** `ws://localhost:8000/ws/events?event_id=1`
 - **Client Protocol:**
@@ -206,13 +334,35 @@ Every seat has one of the following authoritative states:
 
 ### Gap Detection & Recovery
 If the client receives a message where `seq > client_last_seq + 1`:
-1. Client must send a resync request: `{"action": "RESYNC", "from_seq": 1041}`
+1. Client sends a resync request: `{"action": "RESYNC", "from_seq": 1041}`
 2. Or client fetches full snapshot via `GET /api/v1/events/{event_id}/seats`.
 
 ---
 
-## 8. Health & Observability
+## 9. Monitoring & Observability
 
-- `GET /health` / `GET /api/v1/health`: Overall health and service statuses (database, redis).
+### 9.1. Per-Instance Metrics Dashboard
+- **Method:** `GET /api/v1/metrics`
+- **Response (200 OK):**
+```json
+{
+  "timestamp": "2026-11-13T12:00:00Z",
+  "instance_id": "backend-1",
+  "uptime_seconds": 3600.5,
+  "total_requests": 14205,
+  "requests_per_second": 124.5,
+  "latency_p50_ms": 8.42,
+  "latency_p95_ms": 42.15,
+  "latency_p99_ms": 89.30,
+  "cache_hit_ratio": 0.9412,
+  "active_holds_count": 18,
+  "sold_seats_count": 320,
+  "bots_blocked_count": 14
+}
+```
+*Note: `active_holds_count` is null if Redis is unreachable.*
+
+### 9.2. Health Check Endpoints
+- `GET /health` / `GET /api/v1/health`: Overall health and service status (database, redis).
 - `GET /api/v1/health/liveness`: Container liveness.
 - `GET /api/v1/health/readiness`: Container readiness.
