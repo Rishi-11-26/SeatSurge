@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import AppLayout from './components/layout/AppLayout';
 import LandingPage from './pages/LandingPage';
 import QueuePlaceholder from './pages/QueuePlaceholder';
-import SeatsPlaceholder from './pages/SeatsPlaceholder';
+import SeatsPage from './pages/SeatsPage';
 import CheckoutPlaceholder from './pages/CheckoutPlaceholder';
 
 // Supported route identifiers
@@ -42,7 +42,7 @@ export default function App() {
     <AppLayout activeRoute={activeRoute} onNavigate={navigateTo}>
       {activeRoute === 'landing' && <LandingPage onNavigate={navigateTo} />}
       {activeRoute === 'queue' && <QueuePlaceholder onNavigate={navigateTo} />}
-      {activeRoute === 'seats' && <SeatsPlaceholder onNavigate={navigateTo} />}
+      {activeRoute === 'seats' && <SeatsPage onNavigate={navigateTo} />}
       {activeRoute === 'checkout' && <CheckoutPlaceholder onNavigate={navigateTo} />}
     </AppLayout>
   );
