@@ -5,6 +5,7 @@ import SelectedSeatsSummary from '../components/seats/SelectedSeatsSummary';
 import GroupSelectModal from '../components/seats/GroupSelectModal';
 import { loadSeatMap, validateGroupAdjacency } from '../services/seatService';
 import { createSeatHold } from '../services/api';
+import { getAdmissionToken } from '../services/queueService';
 import { AlertCircle, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 export default function SeatsPage({ onNavigate }) {
@@ -143,7 +144,7 @@ export default function SeatsPage({ onNavigate }) {
       // 2. Real Backend Hold Call (or development fallback)
       let holdData = null;
       try {
-        const admissionToken = localStorage.getItem('seatsurge_admission_token');
+        const admissionToken = getAdmissionToken(); // sessionStorage via queueService
         holdData = await createSeatHold({
           eventId: 1,
           seatIds: selected.map(s => s.id),

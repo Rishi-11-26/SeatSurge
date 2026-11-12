@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import AppLayout from './components/layout/AppLayout';
 import LandingPage from './pages/LandingPage';
-import QueuePlaceholder from './pages/QueuePlaceholder';
+import QueuePage from './pages/QueuePage';
 import SeatsPage from './pages/SeatsPage';
-import CheckoutPlaceholder from './pages/CheckoutPlaceholder';
+import CheckoutPage from './pages/CheckoutPage';
 
 // Supported route identifiers
 const VALID_ROUTES = ['landing', 'queue', 'seats', 'checkout'];
@@ -28,7 +28,7 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Programmatic navigation updating the browser URL hash
+  // Programmatic navigation — updates browser URL hash
   const navigateTo = (route) => {
     const targetHash = route === 'landing' ? '#/' : `#/${route}`;
     if (window.location.hash !== targetHash) {
@@ -40,10 +40,10 @@ export default function App() {
 
   return (
     <AppLayout activeRoute={activeRoute} onNavigate={navigateTo}>
-      {activeRoute === 'landing' && <LandingPage onNavigate={navigateTo} />}
-      {activeRoute === 'queue' && <QueuePlaceholder onNavigate={navigateTo} />}
-      {activeRoute === 'seats' && <SeatsPage onNavigate={navigateTo} />}
-      {activeRoute === 'checkout' && <CheckoutPlaceholder onNavigate={navigateTo} />}
+      {activeRoute === 'landing'  && <LandingPage  onNavigate={navigateTo} />}
+      {activeRoute === 'queue'    && <QueuePage    onNavigate={navigateTo} />}
+      {activeRoute === 'seats'    && <SeatsPage    onNavigate={navigateTo} />}
+      {activeRoute === 'checkout' && <CheckoutPage onNavigate={navigateTo} />}
     </AppLayout>
   );
 }
