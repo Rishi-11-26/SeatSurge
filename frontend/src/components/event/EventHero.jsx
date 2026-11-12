@@ -112,8 +112,8 @@ export default function EventHero({ event, onNavigate }) {
                         <span className="text-[10px] text-[#706A61]">1,200 seats · Lower Bowl</span>
                       </div>
                       <div className="text-right">
-                        <span className="font-bold text-[#C8962A] block">10,000¢</span>
-                        <span className="text-[10px] text-[#706A61]">₹100.00</span>
+                        <span className="font-bold text-[#C8962A] block">7,500¢</span>
+                        <span className="text-[10px] text-[#706A61]">₹75.00</span>
                       </div>
                     </div>
                     {/* STANDARD */}
@@ -123,8 +123,8 @@ export default function EventHero({ event, onNavigate }) {
                         <span className="text-[10px] text-[#706A61]">3,600 seats · Upper Bowl</span>
                       </div>
                       <div className="text-right">
-                        <span className="font-bold text-[#3F6B4F] block">5,000¢</span>
-                        <span className="text-[10px] text-[#706A61]">₹50.00</span>
+                        <span className="font-bold text-[#3F6B4F] block">3,500¢</span>
+                        <span className="text-[10px] text-[#706A61]">₹35.00</span>
                       </div>
                     </div>
                   </div>

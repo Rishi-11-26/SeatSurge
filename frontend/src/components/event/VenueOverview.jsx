@@ -79,7 +79,7 @@ export default function VenueOverview({ event, onNavigate }) {
                   <div className="flex items-center justify-between px-4">
                     <span>LOWER BOWL PREMIUM</span>
                     <span className="text-[10px] opacity-90">ROWS E–P · 1,200 SEATS (100/ROW)</span>
-                    <span>10,000¢ (₹100)</span>
+                    <span>7,500¢ (₹75)</span>
                   </div>
                 </button>
 
@@ -95,7 +95,7 @@ export default function VenueOverview({ event, onNavigate }) {
                   <div className="flex items-center justify-between px-4">
                     <span>UPPER BOWL STANDARD</span>
                     <span className="text-[10px] opacity-90">ROWS Q–Z & AA–AH · 3,600 SEATS (200/ROW)</span>
-                    <span>5,000¢ (₹50)</span>
+                    <span>3,500¢ (₹35)</span>
                   </div>
                 </button>
               </div>

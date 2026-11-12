@@ -8,7 +8,7 @@
  *    - Tiers: VIP, PREMIUM, STANDARD
  *    - Row ranges: VIP (A-D), PREMIUM (E-P), STANDARD (Q-Z, AA-AH)
  *    - Seat counts: VIP (240), PREMIUM (1,200), STANDARD (3,600)
- *    - Raw prices: VIP (15,000 cents), PREMIUM (10,000 cents), STANDARD (5,000 cents)
+ *    - Raw prices: VIP (15,000 cents), PREMIUM (7,500 cents), STANDARD (3,500 cents)
  *    - Sections: "Floor VIP" (VIP), "Lower Bowl" (PREMIUM), "Upper Bowl" (STANDARD)
  *    - Max Group Size: 6 adjacent seats
  *    - Hold TTL: 120 seconds
@@ -52,7 +52,7 @@ export const PRIMARY_EVENT = {
     seatStates: ["AVAILABLE", "HELD", "PAYING", "SOLD", "RELEASED"]
   },
 
-  // Authoritative Tier Allocations (Matches Backend init_db.py exactly)
+  // Authoritative Tier Allocations (Matches Backend contract exactly)
   tiers: [
     {
       id: "VIP",
@@ -63,7 +63,7 @@ export const PRIMARY_EVENT = {
       seatsCount: 240, // Authoritative: 4 rows × 60 seats/row = 240
       seatIdRange: [1, 240], // Authoritative IDs: 1 to 240
       seatsPerRow: 60,
-      priceCents: 15000, // Authoritative integer cents from api-contract.md & init_db.py
+      priceCents: 15000, // Authoritative integer cents (15,000 cents)
       priceFormatted: "₹ 150.00", // Formatted rupee equivalent (15,000 cents / 100)
       accentColor: "#E8472B",
       bgBadge: "bg-[#E8472B]/10 text-[#E8472B] border-[#E8472B]/30",
@@ -84,8 +84,8 @@ export const PRIMARY_EVENT = {
       seatsCount: 1200, // Authoritative: 12 rows × 100 seats/row = 1,200
       seatIdRange: [241, 1440], // Authoritative IDs: 241 to 1,440
       seatsPerRow: 100,
-      priceCents: 10000, // Authoritative integer cents (10,000 cents)
-      priceFormatted: "₹ 100.00", // Formatted rupee equivalent (10,000 cents / 100)
+      priceCents: 7500, // Authoritative integer cents (7,500 cents)
+      priceFormatted: "₹ 75.00", // Formatted rupee equivalent (7,500 cents / 100)
       accentColor: "#C8962A",
       bgBadge: "bg-[#C8962A]/10 text-[#C8962A] border-[#C8962A]/30",
       description: "Rows E to P offering elevated 30-degree bowl sightlines, padded club seating, and rapid concessions.",
@@ -105,8 +105,8 @@ export const PRIMARY_EVENT = {
       seatsCount: 3600, // Authoritative: 18 rows × 200 seats/row = 3,600
       seatIdRange: [1441, 5040], // Authoritative IDs: 1,441 to 5,040
       seatsPerRow: 200,
-      priceCents: 5000, // Authoritative integer cents (5,000 cents)
-      priceFormatted: "₹ 50.00", // Formatted rupee equivalent (5,000 cents / 100)
+      priceCents: 3500, // Authoritative integer cents (3,500 cents)
+      priceFormatted: "₹ 35.00", // Formatted rupee equivalent (3,500 cents / 100)
       accentColor: "#3F6B4F",
       bgBadge: "bg-[#3F6B4F]/10 text-[#3F6B4F] border-[#3F6B4F]/30",
       description: "Rows Q to Z and AA to AH spanning the expansive upper deck. High-energy stadium acoustics.",
@@ -159,7 +159,7 @@ export const DISCOVERY_EVENTS = [
       city: "Ahmedabad, India",
       totalSeats: 5040
     },
-    priceRange: "5,000¢ – 25,000¢ (₹50 – ₹250)",
+    priceRange: "3,500¢ – 15,000¢ (₹35 – ₹150)",
     totalSeats: 5040
   },
   {
@@ -179,7 +179,7 @@ export const DISCOVERY_EVENTS = [
       city: "Ahmedabad, India",
       totalSeats: 5040
     },
-    priceRange: "4,000¢ – 18,000¢ (₹40 – ₹180)",
+    priceRange: "3,500¢ – 15,000¢ (₹35 – ₹150)",
     totalSeats: 5040
   },
   {
@@ -199,7 +199,7 @@ export const DISCOVERY_EVENTS = [
       city: "Mumbai, India",
       totalSeats: 2500
     },
-    priceRange: "6,000¢ – 22,000¢ (₹60 – ₹220)",
+    priceRange: "3,500¢ – 15,000¢ (₹35 – ₹150)",
     totalSeats: 2500
   }
 ];
