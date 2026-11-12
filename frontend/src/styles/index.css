@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-ivory: #F4EFE6;
+    --color-softpaper: #EAE3D6;
+    --color-ink: #15130F;
+    --color-secondary-ink: #4A453D;
+    --color-vermilion: #E8472B;
+    --color-deep-vermilion: #C23A20;
+    --color-ochre: #C8962A;
+    --color-moss: #3F6B4F;
+  }
+
+  body {
+    background-color: var(--color-ivory);
+    color: var(--color-ink);
+    font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  h1, h2, h3, h4, .font-editorial {
+    font-family: 'Fraunces', Georgia, serif;
+    font-feature-settings: "liga" 1, "dlig" 1;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom editorial patterns & ticket aesthetics */
+.paper-edge {
+  background-image: radial-gradient(circle at 10px -5px, transparent 12px, #EAE3D6 13px);
+  background-size: 24px 20px;
+}
+
+.ticket-divider {
+  border-top: 2px dashed #C5BCAD;
+  position: relative;
+}
+
+.ticket-divider::before,
+.ticket-divider::after {
+  content: '';
+  position: absolute;
+  top: -9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: #F4EFE6;
+}
+
+.ticket-divider::before {
+  left: -8px;
+}
+
+.ticket-divider::after {
+  right: -8px;
+}
+
+/* Smooth transition defaults */
+button, a {
+  transition: all 0.15s ease-in-out;
+}
