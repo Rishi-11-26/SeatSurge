@@ -1,25 +1,118 @@
-import React from 'react';
-import { Ticket, ShieldCheck, Activity, Users, Info } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Ticket, ShieldCheck, Activity, Users, Info, Radio, Database, Server } from 'lucide-react';
+import { getHealthStatus } from '../../services/api';
 
 export default function Navbar({ activeRoute, onNavigate }) {
+  const [health, setHealth] = useState({
+    checked: false,
+    online: false,
+    instanceId: null,
+    dbStatus: 'UNAVAILABLE',
+    redisStatus: 'UNAVAILABLE',
+  });
+
+  // Probe real backend health telemetry on mount and interval
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkHealth() {
+      try {
+        const data = await getHealthStatus();
+        if (!isMounted) return;
+
+        if (data && typeof data === 'object') {
+          // Backend replica instance ID (only when explicitly reported by backend)
+          const instanceId = data.instance_id || 'UNKNOWN';
+
+          // Extract database status strictly from response — never infer
+          let dbStatus = 'UNKNOWN';
+          if (data.services?.database?.status) {
+            dbStatus = data.services.database.status === 'healthy' ? 'HEALTHY' : 'UNREACHABLE';
+          } else if (typeof data.database === 'boolean') {
+            dbStatus = data.database ? 'HEALTHY' : 'UNREACHABLE';
+          }
+
+          // Extract Redis status strictly from response — never infer from general backend
+          let redisStatus = 'UNKNOWN';
+          if (data.services?.redis?.status) {
+            redisStatus = data.services.redis.status === 'healthy' ? 'HEALTHY' : 'UNREACHABLE';
+          } else if (typeof data.redis === 'boolean') {
+            redisStatus = data.redis ? 'HEALTHY' : 'UNREACHABLE';
+          }
+
+          setHealth({
+            checked: true,
+            online: data.status === 'ok' || data.status === 'degraded',
+            instanceId,
+            dbStatus,
+            redisStatus,
+          });
+          return;
+        }
+      } catch {
+        // Network gateway offline or unreachable
+      }
+
+      if (!isMounted) return;
+      setHealth({
+        checked: true,
+        online: false,
+        instanceId: null,
+        dbStatus: 'UNAVAILABLE',
+        redisStatus: 'UNAVAILABLE',
+      });
+    }
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 20000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   return (
     <header className="border-b border-[#D8CEBF] bg-[#F4EFE6]/90 backdrop-blur-md sticky top-0 z-50">
-      {/* Top micro-bar: Architecture spec & status placeholders */}
+      {/* Top micro-bar: Verified Backend Telemetry & Status */}
       <div className="bg-[#15130F] text-[#EAE3D6] px-4 py-1.5 text-xs font-mono flex flex-wrap items-center justify-between gap-2 border-b border-[#2A2620]">
         <div className="flex items-center space-x-3 text-[11px]">
-          <span className="flex items-center gap-1.5 text-[#A39C91]">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#C8962A]"></span>
-            SYSTEM SPEC (TARGET: 2 NODES · STANDBY)
+          <span className="flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${health.online ? 'bg-[#3F6B4F] animate-pulse' : 'bg-[#C8962A]'}`}></span>
+            {health.online ? (
+              <span className="text-[#3F6B4F] font-bold">
+                BACKEND: ONLINE ({health.instanceId})
+              </span>
+            ) : (
+              <span className="text-[#A39C91]">
+                BACKEND: UNAVAILABLE (GATEWAY :8000)
+              </span>
+            )}
           </span>
+
           <span className="hidden sm:inline text-[#706A61]">|</span>
-          <span className="hidden md:inline text-[#A39C91]">
-            DISTRIBUTED LOCKS: SPEC DEFINED
+          <span className="hidden sm:inline flex items-center gap-1 text-[11px]">
+            <Database className="w-3 h-3 text-[#706A61]" />
+            <span className="text-[#706A61]">DB:</span>
+            <span className={health.dbStatus === 'HEALTHY' ? 'text-[#3F6B4F] font-bold' : health.dbStatus === 'UNREACHABLE' ? 'text-[#E8472B]' : 'text-[#A39C91]'}>
+              {health.dbStatus}
+            </span>
+          </span>
+
+          <span className="hidden md:inline text-[#706A61]">|</span>
+          <span className="hidden md:inline flex items-center gap-1 text-[11px]">
+            <Server className="w-3 h-3 text-[#706A61]" />
+            <span className="text-[#706A61]">REDIS:</span>
+            <span className={health.redisStatus === 'HEALTHY' ? 'text-[#3F6B4F] font-bold' : health.redisStatus === 'UNREACHABLE' ? 'text-[#E8472B]' : 'text-[#A39C91]'}>
+              {health.redisStatus}
+            </span>
           </span>
         </div>
+
         <div className="flex items-center space-x-3 text-[11px]">
           <span className="text-[#C8962A] flex items-center gap-1">
             <Info className="w-3 h-3 text-[#C8962A]" />
-            <span>UI PREVIEW · REAL TELEMETRY CONNECTS IN F5</span>
+            <span>{health.online ? 'VERIFIED TELEMETRY' : 'INTEGRATION MODE: DUAL (REAL + DEV)'}</span>
           </span>
           <span className="bg-[#26221C] px-2 py-0.5 rounded text-[#E8472B] border border-[#3E372E]">
             YUKTIK 2026

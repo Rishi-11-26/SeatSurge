@@ -2,10 +2,11 @@
  * SeatSurge Checkout Service
  *
  * Manages:
- *  - Active hold retrieval / countdown from localStorage
- *  - Idempotency key lifecycle:  one stable key per hold_id, never regenerated on retry
- *  - Mock payment adapter      [DEV SIMULATION]
- *  - Real payment adapter      POST /api/v1/checkout/pay per api-contract.md §7
+ *  - Active hold retrieval / countdown from localStorage:
+ *    Uses backend expires_at as authoritative source if present; falls back to heldAt + 120s.
+ *  - Idempotency key lifecycle: one stable key per hold_id, never regenerated on retry
+ *  - Mock payment adapter [DEV SIMULATION]
+ *  - Real payment adapter POST /api/v1/checkout/pay per api-contract.md §7
  */
 
 import { checkoutPay } from './api';
@@ -27,6 +28,7 @@ const HOLD_TTL_MS  = 120_000; // 120 s per api-contract.md §6.1
 
 /**
  * Read active hold from localStorage and annotate with live countdown.
+ * Uses backend `expires_at` timestamp as authoritative source if present.
  * Returns null if no hold exists.
  * Returns hold object with { isExpired, remainingMs, remainingSeconds }.
  */
@@ -35,10 +37,24 @@ export function getActiveHold() {
     const raw = localStorage.getItem(HOLD_KEY);
     if (!raw) return null;
     const hold = JSON.parse(raw);
-    if (!hold || !hold.heldAt) return null;
+    if (!hold) return null;
 
-    const elapsedMs       = Date.now() - hold.heldAt;
-    const remainingMs     = Math.max(0, HOLD_TTL_MS - elapsedMs);
+    let remainingMs = 0;
+    let elapsedMs = 0;
+
+    if (hold.expires_at) {
+      // Authoritative backend expiration timestamp
+      const expiresAtMs = new Date(hold.expires_at).getTime();
+      remainingMs = Math.max(0, expiresAtMs - Date.now());
+      elapsedMs = Math.max(0, HOLD_TTL_MS - remainingMs);
+    } else if (hold.heldAt) {
+      // Fallback client timestamp
+      elapsedMs = Date.now() - hold.heldAt;
+      remainingMs = Math.max(0, HOLD_TTL_MS - elapsedMs);
+    } else {
+      return null;
+    }
+
     const remainingSeconds = Math.ceil(remainingMs / 1000);
 
     return {
@@ -64,7 +80,6 @@ const IDEM_PREFIX = 'seatsurge_idem_';
 
 export function getOrCreateIdempotencyKey(holdId) {
   if (!holdId) {
-    // Fallback: generate ephemeral key (should not happen in normal flow)
     return _newKey();
   }
   const storageKey = IDEM_PREFIX + holdId;
@@ -131,7 +146,7 @@ export async function processPaymentMock({
     payment_id:   'pay_mock_' + Math.random().toString(36).substring(2, 12),
     booking_id:   bookingRef,
     status:       'SUCCEEDED',
-    seat_ids:     seats.map(s => s.id),
+    seat_ids:     seats.map(s => s.id ?? s.seat_id),
     total_cents:  totalCents,
     confirmed_at: new Date().toISOString(),
     is_mock:      true,
@@ -145,13 +160,27 @@ export async function processPaymentMock({
  */
 export async function processPaymentReal({
   holdId,
-  simulateFailure  = false,
+  simulateFailure = false,
   idempotencyKey,
 }) {
-  return checkoutPay({
-    holdId,
-    paymentMethod: 'simulated_card',
-    simulateFailure,
-    idempotencyKey,
-  });
+  try {
+    const data = await checkoutPay({
+      holdId,
+      paymentMethod: 'simulated_card',
+      simulateFailure,
+      idempotencyKey,
+    });
+    return {
+      ...data,
+      is_mock: false,
+    };
+  } catch (err) {
+    if (err.status === 404) {
+      const pendingErr = new Error('Checkout Payment endpoint (POST /api/v1/checkout/pay) returned HTTP 404: Payment simulation is pending backend Phase 6 implementation.');
+      pendingErr.code = 'BACKEND_DEPENDENCY_PENDING';
+      pendingErr.status = 404;
+      throw pendingErr;
+    }
+    throw err;
+  }
 }

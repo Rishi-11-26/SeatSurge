@@ -8,7 +8,7 @@
  * - STANDARD: Rows Q–Z & AA–AH (18 rows × 200 = 3,600 seats, IDs 1,441–5,040, 3,500 cents)
  */
 
-import { getSeatMapSnapshot } from './api';
+import { fetchFullSeatMap, getSeatMapSnapshot } from './api';
 
 export const SEAT_SECTIONS = [
   {
@@ -61,7 +61,7 @@ export const SEAT_SECTIONS = [
 
 /**
  * Deterministic Mock Generator for all 5,040 seats matching backend init_db.py exactly.
- * Used when backend server is offline or during pre-integration Phase F2 development.
+ * Used during development simulation or as explicitly requested fallback.
  */
 export function generateAuthoritativeSeatMap(eventId = 1) {
   const seats = [];
@@ -71,7 +71,6 @@ export function generateAuthoritativeSeatMap(eventId = 1) {
   const vipRows = ['A', 'B', 'C', 'D'];
   for (const row of vipRows) {
     for (let num = 1; num <= 60; num++) {
-      // Small sample of held/sold seats for realistic simulation
       let status = 'AVAILABLE';
       if ((row === 'A' && (num === 15 || num === 16)) || (row === 'B' && num === 30)) {
         status = 'SOLD';
@@ -81,6 +80,7 @@ export function generateAuthoritativeSeatMap(eventId = 1) {
 
       seats.push({
         id: seatId,
+        seat_id: seatId,
         event_id: eventId,
         row,
         number: num,
@@ -107,6 +107,7 @@ export function generateAuthoritativeSeatMap(eventId = 1) {
 
       seats.push({
         id: seatId,
+        seat_id: seatId,
         event_id: eventId,
         row,
         number: num,
@@ -136,6 +137,7 @@ export function generateAuthoritativeSeatMap(eventId = 1) {
 
       seats.push({
         id: seatId,
+        seat_id: seatId,
         event_id: eventId,
         row,
         number: num,
@@ -153,28 +155,52 @@ export function generateAuthoritativeSeatMap(eventId = 1) {
 }
 
 /**
- * Fetch seat map from real backend or gracefully fall back to authoritative local mock
+ * Fetch seat map from real backend or fallback per configured mode.
+ * Mode options:
+ * - 'real': Strict real mode. Throws error if backend is unavailable.
+ * - 'mock': Local simulation only.
+ * - 'auto': Attempts live backend first; if unavailable, loads local layout with isLive: false.
  */
-export async function loadSeatMap(eventId = 1) {
+export async function loadSeatMap(eventId = 1, { mode = 'auto' } = {}) {
+  if (mode === 'mock') {
+    return {
+      seats: generateAuthoritativeSeatMap(eventId),
+      isLive: false,
+      isMock: true,
+      sequenceNumber: 1,
+      totalSeats: 5040,
+    };
+  }
+
   try {
-    const data = await getSeatMapSnapshot(eventId);
+    const data = await fetchFullSeatMap(eventId);
     if (data && Array.isArray(data.seats) && data.seats.length > 0) {
       return {
         seats: data.seats,
         isLive: true,
+        isMock: false,
         sequenceNumber: data.sequence_number || 1,
-        totalSeats: data.total_seats || 5040,
+        totalSeats: data.total_seats || data.seats.length,
       };
     }
   } catch (err) {
-    // Backend offline or in development mode
-    console.info('[SeatSurge] Backend not reachable, loaded authoritative local 5,040 seat layout.');
+    if (mode === 'real') {
+      // In strict real mode, do not mask failures
+      const error = new Error(`Live seat map fetch failed: ${err.message}`);
+      error.cause = err;
+      throw error;
+    }
+
+    console.info(`[SeatSurge] Backend at http://localhost:8000 not reachable (${err.message}). Loaded local 5,040 seat layout.`);
   }
 
+  // Auto fallback with clear isLive: false flag
   const mockSeats = generateAuthoritativeSeatMap(eventId);
   return {
     seats: mockSeats,
     isLive: false,
+    isMock: true,
+    backendOffline: true,
     sequenceNumber: 1,
     totalSeats: 5040,
   };
@@ -233,7 +259,7 @@ export function getContiguousSeats(allSeats, startSeat, count) {
     .filter(s => s.row === startSeat.row && s.section === startSeat.section)
     .sort((a, b) => a.number - b.number);
 
-  const startIndex = rowSeats.findIndex(s => s.id === startSeat.id);
+  const startIndex = rowSeats.findIndex(s => (s.id ?? s.seat_id) === (startSeat.id ?? startSeat.seat_id));
   if (startIndex === -1) return [startSeat];
 
   const candidateSeats = [];

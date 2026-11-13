@@ -5,6 +5,7 @@
  */
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+export const GATEWAY_ROOT = import.meta.env.VITE_GATEWAY_ROOT || 'http://localhost:8000';
 export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/ws/events';
 
 /**
@@ -35,10 +36,14 @@ export function generateIdempotencyKey() {
 }
 
 /**
- * Standard fetch helper with Session and Error handling
+ * Standard fetch helper with Session and Error handling (RFC 7807)
  */
 async function request(endpoint, options = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
+  // Allow full URL (e.g. root /health) or relative to API_BASE_URL
+  const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+
   const sessionId = getOrCreateSessionId();
 
   const headers = {
@@ -57,20 +62,22 @@ async function request(endpoint, options = {}) {
       const errorPayload = data?.error || {
         code: `HTTP_${response.status}`,
         message: response.statusText || 'Unknown API Error',
+        details: data?.detail || {},
       };
-      const error = new Error(errorPayload.message);
+      const error = new Error(errorPayload.message || 'API request failed');
       error.code = errorPayload.code;
-      error.details = errorPayload.details;
+      error.details = errorPayload.details || {};
       error.status = response.status;
+      error.timestamp = errorPayload.timestamp;
       throw error;
     }
 
     return data;
   } catch (err) {
-    // If backend is not running yet during early development
     if (err.name === 'TypeError' && err.message.includes('fetch')) {
-      const netError = new Error(`Cannot connect to SeatSurge API Gateway at ${API_BASE_URL}. Ensure backend instances and NGINX are running.`);
+      const netError = new Error(`Cannot connect to SeatSurge API Gateway at ${url}. Ensure backend instances and NGINX are running.`);
       netError.code = 'NETWORK_GATEWAY_UNAVAILABLE';
+      netError.status = 0;
       throw netError;
     }
     throw err;
@@ -78,7 +85,94 @@ async function request(endpoint, options = {}) {
 }
 
 /**
- * 3. Waiting Room API
+ * 1. Events Catalog API
+ * GET /api/v1/events
+ */
+export async function getEvents() {
+  return request('/events', { method: 'GET' });
+}
+
+/**
+ * GET /api/v1/events/{event_id}
+ */
+export async function getEvent(eventId = 1) {
+  return request(`/events/${eventId}`, { method: 'GET' });
+}
+
+/**
+ * 2. Seat Catalog & Live Map Snapshot
+ * GET /api/v1/events/{event_id}/seats
+ * Query params: page, page_size, tier, row
+ */
+export async function getSeatMapSnapshot(eventId = 1, { page = 1, page_size = 100, tier, row } = {}) {
+  const params = new URLSearchParams();
+  if (page) params.append('page', page);
+  if (page_size) params.append('page_size', page_size);
+  if (tier) params.append('tier', tier);
+  if (row) params.append('row', row);
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request(`/events/${eventId}/seats${query}`, { method: 'GET' });
+}
+
+/**
+ * Fetch all 5,040 seats paginated from backend
+ * Backend max page_size is 1,000 (le=1000 validation in FastAPI).
+ * Fetches page 1, determines total_pages (6 pages for 5,040 seats),
+ * and fetches the rest concurrently.
+ */
+export async function fetchFullSeatMap(eventId = 1) {
+  const PAGE_SIZE = 1000;
+  const firstPage = await getSeatMapSnapshot(eventId, { page: 1, page_size: PAGE_SIZE });
+
+  let allSeats = [...(firstPage.seats || [])];
+  const totalPages = firstPage.total_pages || 1;
+
+  if (totalPages > 1) {
+    const pagePromises = [];
+    for (let p = 2; p <= totalPages; p++) {
+      pagePromises.push(getSeatMapSnapshot(eventId, { page: p, page_size: PAGE_SIZE }));
+    }
+    const subsequentPages = await Promise.all(pagePromises);
+    for (const pageData of subsequentPages) {
+      if (pageData && Array.isArray(pageData.seats)) {
+        allSeats = allSeats.concat(pageData.seats);
+      }
+    }
+  }
+
+  // Normalize seats so `id` and `seat_id` are consistently available
+  const normalizedSeats = allSeats.map(seat => ({
+    ...seat,
+    id: seat.seat_id ?? seat.id,
+    seat_id: seat.seat_id ?? seat.id,
+  }));
+
+  return {
+    seats: normalizedSeats,
+    total_seats: firstPage.total_seats || normalizedSeats.length,
+    sequence_number: firstPage.sequence_number || 0,
+    timestamp: firstPage.timestamp || new Date().toISOString(),
+    isLive: true,
+  };
+}
+
+/**
+ * GET /api/v1/events/{event_id}/seats/{seat_id}
+ */
+export async function getSingleSeat(eventId = 1, seatId) {
+  return request(`/events/${eventId}/seats/${seatId}`, { method: 'GET' });
+}
+
+/**
+ * GET /api/v1/events/{event_id}/availability
+ */
+export async function getSeatAvailability(eventId = 1) {
+  return request(`/events/${eventId}/availability`, { method: 'GET' });
+}
+
+/**
+ * 3. Waiting Room API (Phase 5)
  * POST /api/v1/queue/enter
  */
 export async function enterQueue(eventId = 1) {
@@ -89,17 +183,7 @@ export async function enterQueue(eventId = 1) {
 }
 
 /**
- * 4. Seat Catalog & Live Map Snapshot
- * GET /api/v1/events/{event_id}/seats
- */
-export async function getSeatMapSnapshot(eventId = 1) {
-  return request(`/events/${eventId}/seats`, {
-    method: 'GET',
-  });
-}
-
-/**
- * 5. Atomic Seat Holds
+ * 4. Atomic Seat Holds (Phase 2)
  * POST /api/v1/events/{event_id}/holds
  * Max 6 seats. Adjacent required. Idempotent.
  */
@@ -124,7 +208,7 @@ export async function createSeatHold({
 }
 
 /**
- * 6. Checkout & Payment Simulation
+ * 5. Checkout & Payment Simulation (Phase 6)
  * POST /api/v1/checkout/pay
  */
 export async function checkoutPay({
@@ -147,9 +231,22 @@ export async function checkoutPay({
 }
 
 /**
- * 8. Health & Observability
- * GET /api/v1/health or GET /health
+ * 6. Health & Diagnostics
+ * GET /health or GET /api/v1/health
  */
 export async function getHealthStatus() {
-  return request('/health', { method: 'GET' });
+  // Probe root /health or /api/v1/health
+  try {
+    return await request(`${GATEWAY_ROOT}/health`, { method: 'GET' });
+  } catch {
+    return request('/health', { method: 'GET' });
+  }
+}
+
+/**
+ * 7. Monitoring & Metrics
+ * GET /api/v1/metrics
+ */
+export async function getMetrics() {
+  return request('/metrics', { method: 'GET' });
 }

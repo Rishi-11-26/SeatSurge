@@ -11,6 +11,7 @@
  * REAL ADAPTER:
  *   Calls POST /api/v1/queue/enter per docs/api-contract.md §5.
  *   Requires backend NGINX + backend instances to be running.
+ *   When backend returns 404/501 (Phase 5 pending), clearly reports the backend dependency.
  *
  * Admission tokens are stored in sessionStorage only — never rendered in UI.
  */
@@ -53,7 +54,7 @@ export function clearQueueSession() {
   sessionStorage.removeItem(ADMISSION_TOKEN_KEY);
 }
 
-// ─── Admission Token (sessionStorage — secure, never rendered) ────────────────
+// ─── Admission Token (sessionStorage — secure, never rendered in UI or logs) ──
 export function getAdmissionToken() {
   return sessionStorage.getItem(ADMISSION_TOKEN_KEY) || null;
 }
@@ -122,7 +123,7 @@ export async function pollQueueMock(currentSession) {
   const newPos     = Math.max(0, currentSession.queue_position - advance);
 
   if (newPos === 0) {
-    // Admitted — generate a synthetic token (stored securely, never shown)
+    // Admitted in dev simulation — generate synthetic token
     const mockToken = 'adm_mock_' + Math.random().toString(36).substring(2, 16);
     persistAdmissionToken(mockToken);
 
@@ -153,8 +154,18 @@ export async function pollQueueMock(currentSession) {
  * Requires X-Session-ID header (set by api.js request helper).
  */
 export async function joinQueueReal(eventId = 1) {
-  const response = await enterQueue(eventId);
-  return _processRealResponse(response, eventId, Date.now());
+  try {
+    const response = await enterQueue(eventId);
+    return _processRealResponse(response, eventId, Date.now());
+  } catch (err) {
+    if (err.status === 404) {
+      const pendingErr = new Error('Virtual Waiting Room endpoint (POST /api/v1/queue/enter) returned HTTP 404: Waiting room queue is pending backend Phase 5 implementation.');
+      pendingErr.code = 'BACKEND_DEPENDENCY_PENDING';
+      pendingErr.status = 404;
+      throw pendingErr;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -162,8 +173,18 @@ export async function joinQueueReal(eventId = 1) {
  * Per api-contract.md §5: same endpoint is used to check current status.
  */
 export async function pollQueueReal(eventId = 1) {
-  const response = await enterQueue(eventId);
-  return _processRealResponse(response, eventId, null);
+  try {
+    const response = await enterQueue(eventId);
+    return _processRealResponse(response, eventId, null);
+  } catch (err) {
+    if (err.status === 404) {
+      const pendingErr = new Error('Virtual Waiting Room endpoint (POST /api/v1/queue/enter) returned HTTP 404: Waiting room queue is pending backend Phase 5 implementation.');
+      pendingErr.code = 'BACKEND_DEPENDENCY_PENDING';
+      pendingErr.status = 404;
+      throw pendingErr;
+    }
+    throw err;
+  }
 }
 
 function _processRealResponse(response, eventId, joinedAt) {

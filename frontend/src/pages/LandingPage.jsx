@@ -1,14 +1,27 @@
-import React, { useState } from 'react';
-import { PRIMARY_EVENT } from '../services/eventService';
+import React, { useState, useEffect } from 'react';
+import { PRIMARY_EVENT, fetchAuthoritativeEvent } from '../services/eventService';
 import EventHero from '../components/event/EventHero';
 import VenueOverview from '../components/event/VenueOverview';
 import TicketCategories from '../components/event/TicketCategories';
 import EventDetails from '../components/event/EventDetails';
 import EventDiscovery from '../components/event/EventDiscovery';
-import { Info } from 'lucide-react';
+import { Info, Wifi } from 'lucide-react';
 
 export default function LandingPage({ onNavigate }) {
   const [activeEvent, setActiveEvent] = useState(PRIMARY_EVENT);
+
+  // Probe live event from backend API (GET /api/v1/events/1)
+  useEffect(() => {
+    let isMounted = true;
+    fetchAuthoritativeEvent(1).then(liveEvent => {
+      if (isMounted && liveEvent) {
+        setActiveEvent(liveEvent);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-0">
@@ -18,12 +31,17 @@ export default function LandingPage({ onNavigate }) {
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-[#C8962A] flex-shrink-0" />
             <span>
-              <strong>Phase F1 Event Experience:</strong> Authoritative allocation (5,040 seats: 240 VIP, 1,200 PREMIUM, 3,600 STANDARD) aligned with backend seed and <code className="bg-[#F4EFE6] px-1 py-0.5 rounded border border-[#C5BCAD]">docs/api-contract.md</code>.
+              <strong>Phase F5 Real Integration:</strong> Authoritative 5,040 seats (240 VIP · 1,200 PREMIUM · 3,600 STANDARD). REST client + RFC 6455 WebSocket connected.
             </span>
           </div>
-          <span className="text-[#706A61] text-[11px]">
-            API GATEWAY TARGET: http://localhost:8000/api/v1
-          </span>
+          <div className="flex items-center gap-2 text-[11px] text-[#706A61]">
+            <span className="flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${activeEvent.isLive ? 'bg-[#3F6B4F] animate-pulse' : 'bg-[#C8962A]'}`} />
+              {activeEvent.isLive ? 'LIVE EVENT METADATA' : 'STANDBY MODE'}
+            </span>
+            <span>·</span>
+            <span>GATEWAY: :8000</span>
+          </div>
         </div>
       </div>
 
@@ -72,10 +90,10 @@ export default function LandingPage({ onNavigate }) {
                 02
               </div>
               <h3 className="font-editorial text-lg font-bold text-[#15130F]">
-                Fair Virtual Queue
+                WebSocket Live Fan-Out
               </h3>
               <p className="text-xs text-[#4A453D] leading-relaxed">
-                Shared in-memory FIFO queue position synchronized across all application nodes to regulate burst seat map traffic.
+                Sequence-numbered state broadcasts with automatic gap detection and snapshot resynchronization.
               </p>
             </div>
 
@@ -84,10 +102,10 @@ export default function LandingPage({ onNavigate }) {
                 03
               </div>
               <h3 className="font-editorial text-lg font-bold text-[#15130F]">
-                Sub-Second Fan-Out
+                FIFO Virtual Queue
               </h3>
               <p className="text-xs text-[#4A453D] leading-relaxed">
-                WebSocket event fan-out keeps connected clients synchronized within 1 second upon every seat hold, purchase, or TTL release.
+                Fair token-gated admission via Redis Sorted Sets. Protects seat map APIs from sudden traffic spikes.
               </p>
             </div>
 
@@ -96,18 +114,18 @@ export default function LandingPage({ onNavigate }) {
                 04
               </div>
               <h3 className="font-editorial text-lg font-bold text-[#15130F]">
-                Biometric Bot Defense
+                Idempotent Checkout
               </h3>
               <p className="text-xs text-[#4A453D] leading-relaxed">
-                Real-time behavioural entropy and pointer velocity scoring (F1 ≥ 0.80) to challenge scalper automation.
+                Client unique UUID headers guard every transaction to guarantee zero double charges on network retries.
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 6. Event Discovery Catalogue */}
-      <EventDiscovery onSelectEvent={setActiveEvent} onNavigate={onNavigate} />
+      {/* 6. Discover More Events Catalog */}
+      <EventDiscovery onNavigate={onNavigate} />
     </div>
   );
 }

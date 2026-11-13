@@ -9,7 +9,8 @@ import {
   Accessibility, 
   Layers, 
   Info,
-  Activity
+  Activity,
+  Radio
 } from 'lucide-react';
 import { SEAT_SECTIONS } from '../../services/seatService';
 
@@ -22,6 +23,7 @@ export default function SeatMapHeader({
   onResetZoom,
   selectedCount,
   isLive,
+  wsStatus,
 }) {
   return (
     <div className="bg-[#EAE3D6] border-b border-[#D8CEBF] p-4 sm:p-5 space-y-4">
@@ -51,12 +53,25 @@ export default function SeatMapHeader({
         </div>
 
         {/* Zoom Controls & Mode Indicator */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Backend Mode Indicator */}
           <div className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded bg-[#F4EFE6] border border-[#D8CEBF]">
             <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-[#3F6B4F] animate-pulse' : 'bg-[#C8962A]'}`} />
             <span className="text-[#4A453D]">
-              {isLive ? 'BACKEND LIVE' : '5,040 SEAT ENGINE'}
+              {isLive ? 'BACKEND LIVE' : '5,040 ENGINE'}
+            </span>
+          </div>
+
+          {/* WebSocket Real-Time Indicator */}
+          <div className="flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded bg-[#F4EFE6] border border-[#D8CEBF]" title="WebSocket Real-Time Broadcast Status (RFC 6455)">
+            <span className={`w-2 h-2 rounded-full ${
+              wsStatus === 'CONNECTED' ? 'bg-[#3F6B4F] animate-pulse' :
+              wsStatus === 'CONNECTING' || wsStatus === 'RECONNECTING' ? 'bg-[#C8962A] animate-pulse' :
+              'bg-[#A39C91]'
+            }`} />
+            <span className="text-[#4A453D] flex items-center gap-1">
+              <Radio className="w-3 h-3 text-[#706A61]" />
+              WS: {wsStatus || 'STANDBY'}
             </span>
           </div>
 

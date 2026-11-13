@@ -104,7 +104,7 @@ export default function CheckoutPage({ onNavigate }) {
   // ── Payment submission ───────────────────────────────────────────────────
   const handlePay = useCallback(async () => {
     if (isSubmitting || submittedRef.current) return;
-    if (!hold || hold.isExpired) return;
+    if (!hold || hold.isExpired || holdSeconds === 0) return;
 
     submittedRef.current = true;
     setIsSubmitting(true);
@@ -132,29 +132,32 @@ export default function CheckoutPage({ onNavigate }) {
 
       setPaymentResult(result);
 
-      if (result.status === 'SUCCEEDED') {
+      // Only definitive backend SUCCEEDED with booking_id / payment_id confirms a booking
+      if (result && result.status === 'SUCCEEDED' && (result.booking_id || result.payment_id)) {
         clearActiveHold();
         clearIdempotencyKey(holdId);
         setPaymentStatus(PAYMENT_STATUS.SUCCEEDED);
         setView('confirmation');
-      } else if (result.status === 'DECLINED') {
+      } else if (result?.status === 'DECLINED') {
         setPaymentStatus(PAYMENT_STATUS.DECLINED);
-        submittedRef.current = false; // allow retry
-      } else if (result.status === 'PENDING') {
+        submittedRef.current = false; // allow retry with same idempotency key
+      } else if (result?.status === 'PENDING') {
         setPaymentStatus(PAYMENT_STATUS.PENDING);
-        submittedRef.current = false;
+        submittedRef.current = false; // keep state as pending
       } else {
         setPaymentStatus(PAYMENT_STATUS.ERROR);
         submittedRef.current = false;
       }
     } catch (err) {
-      setPaymentResult({ error: err?.message || 'Unknown error' });
+      setPaymentResult({
+        error: err?.message || 'Payment network request failed. Idempotency key preserved; retry is safe.',
+      });
       setPaymentStatus(PAYMENT_STATUS.ERROR);
       submittedRef.current = false;
     } finally {
       setIsSubmitting(false);
     }
-  }, [hold, isMock, simFailure, simPending, isSubmitting]);
+  }, [hold, isMock, simFailure, simPending, isSubmitting, holdSeconds]);
 
   const handleRetry = useCallback(() => {
     // Keep same idempotency key — do NOT regenerate
@@ -800,13 +803,13 @@ function ConfirmationView({ paymentResult, seats, totalCents, onNavigate }) {
           </div>
         </div>
         <div className="space-y-1.5 text-center sm:text-left">
-          <div className="text-xs font-mono font-semibold text-[#15130F]">E-Ticket QR Code</div>
+          <div className="text-xs font-mono font-semibold text-[#15130F]">Digital Entry Pass (Preview Placeholder)</div>
           <div className="text-xs font-mono text-[#C8962A] flex items-center gap-1 justify-center sm:justify-start">
             <Info className="w-3.5 h-3.5" />
-            <span>Placeholder — real QR generated in F5 ticket service</span>
+            <span>NON-SCANNABLE PREVIEW · Verifiable pass issued upon gate integration</span>
           </div>
           <p className="text-[11px] font-mono text-[#706A61]">
-            Your e-ticket will be emailed once the ticketing service is integrated.
+            Official tickets will be delivered once the Phase 6 ticketing service is active.
             Present booking reference <strong>{bookingRef}</strong> at the gate.
           </p>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SeatMapHeader from '../components/seats/SeatMapHeader';
 import SectionGrid from '../components/seats/SectionGrid';
 import SelectedSeatsSummary from '../components/seats/SelectedSeatsSummary';
@@ -6,12 +6,14 @@ import GroupSelectModal from '../components/seats/GroupSelectModal';
 import { loadSeatMap, validateGroupAdjacency } from '../services/seatService';
 import { createSeatHold } from '../services/api';
 import { getAdmissionToken } from '../services/queueService';
-import { AlertCircle, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { websocketService, WS_STATUS } from '../services/websocketService';
+import { AlertCircle, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
 
 export default function SeatsPage({ onNavigate }) {
   const [seats, setSeats] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
+  const [wsStatus, setWsStatus] = useState(WS_STATUS.DISCONNECTED);
   const [activeSection, setActiveSection] = useState('VIP'); // Fast initial section view
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [selectedSeatIds, setSelectedSeatIds] = useState([]);
@@ -23,6 +25,7 @@ export default function SeatsPage({ onNavigate }) {
   // Notifications and Simulation State
   const [notification, setNotification] = useState(null);
   const [isHolding, setIsHolding] = useState(false);
+  const [useSimulationFallback, setUseSimulationFallback] = useState(false);
   const [simulateRaceCondition, setSimulateRaceCondition] = useState(false);
 
   // Fast seat map lookup map by ID
@@ -34,22 +37,121 @@ export default function SeatsPage({ onNavigate }) {
     return map;
   }, [seats]);
 
-  // Load seats
+  // Load seats from REST endpoint
   const fetchSeats = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await loadSeatMap(1);
+      const result = await loadSeatMap(1, { mode: useSimulationFallback ? 'mock' : 'auto' });
       setSeats(result.seats);
       setIsLive(result.isLive);
+
+      if (typeof result.sequenceNumber === 'number') {
+        websocketService.resetSeq(result.sequenceNumber);
+      }
+
+      if (result.backendOffline) {
+        setNotification({
+          type: 'warning',
+          message: 'Backend API offline at http://localhost:8000. Loaded authoritative local 5,040 stadium layout.',
+        });
+      }
     } catch (err) {
       console.error('Failed to load seat map', err);
+      setNotification({
+        type: 'error',
+        message: `Failed to load live seat map: ${err.message}`,
+      });
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [useSimulationFallback]);
 
+  // Initial load and WebSocket setup
   useEffect(() => {
     fetchSeats();
+
+    // Connect to Real-Time WebSocket fanout per api-contract.md §8
+    websocketService.connect(1);
+
+    const unsubStatus = websocketService.onStatusChange(status => {
+      setWsStatus(status);
+    });
+
+    // Handle incoming incremental seat state changes
+    const unsubUpdates = websocketService.subscribe(({ updates }) => {
+      if (!updates || updates.length === 0) return;
+
+      const updateMap = new Map();
+      for (const u of updates) {
+        updateMap.set(u.seat_id, u.status);
+      }
+
+      // Immutable state update: preserves identical object references for unchanged seats
+      // React.memo on SeatCell skips rendering all 5,039 unaffected seats!
+      setSeats(prev => {
+        let hasChanges = false;
+        const nextSeats = prev.map(seat => {
+          const nextStatus = updateMap.get(seat.id);
+          if (nextStatus && nextStatus !== seat.status) {
+            hasChanges = true;
+            return { ...seat, status: nextStatus };
+          }
+          return seat; // Exact reference preserved
+        });
+
+        // If duplicate event or no status actually changed, bail out of re-render
+        return hasChanges ? nextSeats : prev;
+      });
+
+      // Deselect any selected seat that is now claimed (HELD / SOLD) by another user
+      setSelectedSeatIds(prevSelected => {
+        const remaining = prevSelected.filter(id => {
+          const status = updateMap.get(id);
+          return !status || status === 'AVAILABLE';
+        });
+
+        if (remaining.length < prevSelected.length) {
+          setNotification({
+            type: 'warning',
+            message: 'A seat in your selection was just claimed by another user.',
+          });
+        }
+        return remaining;
+      });
+    });
+
+    // Handle full snapshot message received over WebSocket
+    const unsubSnapshot = websocketService.onSnapshot((data) => {
+      if (data && Array.isArray(data.seats)) {
+        const normalized = data.seats.map(s => ({
+          ...s,
+          id: s.seat_id ?? s.id,
+          seat_id: s.seat_id ?? s.id,
+        }));
+        setSeats(normalized);
+        setNotification({
+          type: 'success',
+          message: `Seat map resynchronized via real-time WebSocket snapshot (seq ${data.seq || 0}).`,
+        });
+      }
+    });
+
+    // Handle sequence gap: trigger full snapshot fetch
+    const unsubGap = websocketService.onGap((lastSeq, newSeq) => {
+      setNotification({
+        type: 'warning',
+        message: `WebSocket gap detected (${lastSeq} → ${newSeq}). Refreshing seat map snapshot...`,
+      });
+      fetchSeats();
+    });
+
+    return () => {
+      unsubStatus();
+      unsubUpdates();
+      unsubSnapshot();
+      unsubGap();
+      websocketService.disconnect();
+    };
   }, [fetchSeats]);
 
   // Memoized seat selection handler to prevent unnecessary full-map re-renders
@@ -115,7 +217,7 @@ export default function SeatsPage({ onNavigate }) {
     setNotification(null);
   }, []);
 
-  // Hold & Checkout Flow (Demonstrates Optimistic Contention & Rollback Handling)
+  // Hold & Checkout Flow (Real Backend POST /api/v1/events/1/holds with dev simulation fallback)
   const handleProceedToHold = async () => {
     const selected = selectedSeatIds.map(id => seatLookup.get(id)).filter(Boolean);
     if (selected.length === 0) return;
@@ -123,40 +225,62 @@ export default function SeatsPage({ onNavigate }) {
     setIsHolding(true);
     setNotification(null);
 
-    try {
-      // 1. If contention simulation is enabled, simulate another customer claiming the seat
-      if (simulateRaceCondition) {
-        await new Promise(r => setTimeout(r, 600)); // simulated latency
-        const conflictSeat = selected[0];
-        
-        // Optimistic rollback: mark conflicting seat as HELD and deselect
-        setSeats(prev => prev.map(s => s.id === conflictSeat.id ? { ...s, status: 'HELD' } : s));
-        setSelectedSeatIds([]);
-        
-        setNotification({
-          type: 'error',
-          message: `Hold Rejected (Development Simulation): Seat Row ${conflictSeat.row}-${conflictSeat.number} was claimed by another session. Selection rolled back.`,
-        });
-        setIsHolding(false);
-        return;
-      }
+    // 1. If simulated race condition is explicitly checked
+    if (simulateRaceCondition) {
+      await new Promise(r => setTimeout(r, 600)); // simulated latency
+      const conflictSeat = selected[0];
+      
+      // Optimistic rollback: mark conflicting seat as HELD and deselect
+      setSeats(prev => prev.map(s => s.id === conflictSeat.id ? { ...s, status: 'HELD' } : s));
+      setSelectedSeatIds([]);
+      
+      setNotification({
+        type: 'error',
+        message: `Hold Rejected (Development Simulation): Seat Row ${conflictSeat.row}-${conflictSeat.number} was claimed by another session. Selection rolled back.`,
+      });
+      setIsHolding(false);
+      return;
+    }
 
-      // 2. Real Backend Hold Call (or development fallback)
+    try {
+      const admissionToken = getAdmissionToken(); // sessionStorage via queueService
       let holdData = null;
-      try {
-        const admissionToken = getAdmissionToken(); // sessionStorage via queueService
-        holdData = await createSeatHold({
-          eventId: 1,
-          seatIds: selected.map(s => s.id),
-          admissionToken,
-        });
-      } catch (err) {
-        // Fallback for pre-integration phase
+
+      if (!useSimulationFallback) {
+        // Strict Real Backend Mode: Call POST /api/v1/events/1/holds
+        try {
+          holdData = await createSeatHold({
+            eventId: 1,
+            seatIds: selected.map(s => s.id),
+            admissionToken,
+          });
+        } catch (apiErr) {
+          // Check for 409 Conflict (Seats already taken by another user)
+          if (apiErr.status === 409 || apiErr.code === 'CONFLICT' || apiErr.code === 'SEATS_UNAVAILABLE') {
+            const conflictSeatIds = apiErr.details?.conflicting_seats || [selected[0].id];
+            setSeats(prev => prev.map(s => conflictSeatIds.includes(s.id) ? { ...s, status: 'HELD' } : s));
+            setSelectedSeatIds(prev => prev.filter(id => !conflictSeatIds.includes(id)));
+            setNotification({
+              type: 'error',
+              message: `Hold Conflict (409): One or more selected seats were already claimed by another session. Refreshed seat status.`,
+            });
+            setIsHolding(false);
+            return;
+          }
+
+          // Backend hold endpoint not available or returned 404 (Phase 2 pending)
+          throw apiErr;
+        }
+      } else {
+        // Explicit Development Simulation Mode
+        await new Promise(r => setTimeout(r, 400));
         holdData = {
           hold_id: 'hld_sim_' + Math.random().toString(36).substring(2, 10),
           event_id: 1,
           seat_ids: selected.map(s => s.id),
           time_remaining_seconds: 120,
+          expires_at: new Date(Date.now() + 120000).toISOString(),
+          is_mock: true,
         };
       }
 
@@ -173,9 +297,14 @@ export default function SeatsPage({ onNavigate }) {
       // Transition to Checkout
       onNavigate('checkout');
     } catch (err) {
+      console.warn('Real hold attempt failed:', err);
       setNotification({
         type: 'error',
-        message: err.message || 'Failed to secure hold. Please reselect available seats.',
+        message: err.code === 'NETWORK_GATEWAY_UNAVAILABLE'
+          ? 'Backend gateway offline at http://localhost:8000. Start backend instances or toggle "Enable Dev Simulation" below to proceed.'
+          : err.status === 404
+          ? 'Hold API (POST /api/v1/events/1/holds) returned 404. Backend Phase 2 is pending. Toggle "Enable Dev Simulation" to test downstream checkout.'
+          : (err.message || 'Failed to secure seat hold. Please reselect.'),
       });
     } finally {
       setIsHolding(false);
@@ -198,6 +327,7 @@ export default function SeatsPage({ onNavigate }) {
         onResetZoom={() => setZoomLevel(1.0)}
         selectedCount={selectedSeatIds.length}
         isLive={isLive}
+        wsStatus={wsStatus}
       />
 
       {/* Notification Toast Banner */}
@@ -228,20 +358,31 @@ export default function SeatsPage({ onNavigate }) {
         </div>
       )}
 
-      {/* Development / Demo Race Condition Simulation Bar */}
+      {/* Development / Simulation & Integration Controls Bar */}
       <div className="bg-[#EAE3D6] border-b border-[#D8CEBF] px-4 py-1.5">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-[#4A453D]">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={simulateRaceCondition}
-              onChange={(e) => setSimulateRaceCondition(e.target.checked)}
-              className="accent-[#E8472B] rounded"
-            />
-            <span>
-              <strong>[DEV SIMULATION]:</strong> Simulate Hold Contention / Rollback ("Seat already taken by another user")
-            </span>
-          </label>
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[#4A453D]">
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useSimulationFallback}
+                onChange={(e) => setUseSimulationFallback(e.target.checked)}
+                className="accent-[#E8472B] rounded"
+              />
+              <span>
+                <strong>[DEV SIMULATION]:</strong> Enable Mock Hold Fallback (When backend Phase 2 is pending)
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={simulateRaceCondition}
+                onChange={(e) => setSimulateRaceCondition(e.target.checked)}
+                className="accent-[#E8472B] rounded"
+              />
+              <span>Simulate Hold Contention / Rollback</span>
+            </label>
+          </div>
           <span className="text-[#706A61]">
             AUTHORITATIVE CAPACITY: 5,040 SEATS (VIP: 240 · PREMIUM: 1,200 · STANDARD: 3,600)
           </span>
@@ -252,7 +393,7 @@ export default function SeatsPage({ onNavigate }) {
       {isLoading ? (
         <div className="flex-grow flex flex-col items-center justify-center p-12 space-y-3 font-mono text-xs text-[#706A61]">
           <RefreshCw className="w-6 h-6 animate-spin text-[#E8472B]" />
-          <span>Generating authoritative 5,040 stadium seat map...</span>
+          <span>Loading authoritative 5,040 stadium seat map...</span>
         </div>
       ) : (
         <SectionGrid

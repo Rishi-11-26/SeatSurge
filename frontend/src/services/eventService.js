@@ -20,6 +20,8 @@
  *    - Secondary catalog events (ICC T20, A.R. Rahman) used for discovery prototyping.
  */
 
+import { getEvent, getEvents } from './api';
+
 export const PRIMARY_EVENT = {
   id: 1, // Authoritative Event ID
   title: "Coldplay: Music of the Spheres — World Tour Finale",
@@ -136,6 +138,30 @@ export const PRIMARY_EVENT = {
     { title: "Dynamic QR Ingress", desc: "Digital verifiable passes issued immediately upon backend payment confirmation." }
   ]
 };
+
+/**
+ * Fetch Authoritative Event details from backend API (GET /api/v1/events/{id})
+ * Overlays live metadata if online, else returns PRIMARY_EVENT with isLive: false.
+ */
+export async function fetchAuthoritativeEvent(eventId = 1) {
+  try {
+    const backendData = await getEvent(eventId);
+    if (backendData && backendData.id) {
+      return {
+        ...PRIMARY_EVENT,
+        id: backendData.id,
+        backendName: backendData.name,
+        backendVenue: backendData.venue_name,
+        totalSeats: backendData.total_seats || 5040,
+        startTimeIso: backendData.start_time,
+        isLive: true,
+      };
+    }
+  } catch (err) {
+    // Gateway offline or backend unreachable
+  }
+  return { ...PRIMARY_EVENT, isLive: false };
+}
 
 /**
  * DEVELOPMENT MOCK DATA: Secondary discovery events
