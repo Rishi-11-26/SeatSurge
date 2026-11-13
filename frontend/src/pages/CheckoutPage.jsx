@@ -374,7 +374,6 @@ export default function CheckoutPage({ onNavigate }) {
               <div className="text-xs font-mono font-semibold text-[#15130F] uppercase tracking-widest">
                 Selected Seats ({seats.length} / 6 max)
               </div>
-              <div className="text-[10px] font-mono text-[#706A61]">ALL-OR-NOTHING HOLD</div>
             </div>
 
             <div className="divide-y divide-[#D8CEBF]">
@@ -387,7 +386,6 @@ export default function CheckoutPage({ onNavigate }) {
             <div className="px-4 py-4 bg-[#D8CEBF]/30 space-y-1.5">
               <div className="flex justify-between text-xs font-mono text-[#4A453D]">
                 <span>{seats.length} ticket{seats.length !== 1 ? 's' : ''}</span>
-                <span>{totalCents.toLocaleString()}¢</span>
               </div>
               <div className="flex justify-between font-semibold text-sm">
                 <span className="font-mono text-[#15130F] uppercase tracking-widest text-xs">
@@ -401,24 +399,7 @@ export default function CheckoutPage({ onNavigate }) {
             </div>
           </div>
 
-          {/* Authoritative pricing reference */}
-          <div className="bg-[#F4EFE6] border border-[#D8CEBF] rounded px-4 py-3 font-mono text-xs
-                          text-[#4A453D] space-y-1">
-            <div className="font-semibold text-[#15130F] mb-1 text-[10px] uppercase tracking-widest">
-              Authoritative Pricing
-            </div>
-            {[
-              ['VIP',      '15,000¢', '₹150.00'],
-              ['PREMIUM',  ' 7,500¢', ' ₹75.00'],
-              ['STANDARD', ' 3,500¢', ' ₹35.00'],
-            ].map(([tier, cents, rupees]) => (
-              <div key={tier} className="flex gap-3">
-                <span className="w-16 text-[#706A61]">{tier}</span>
-                <span className="w-16">{cents}</span>
-                <span className="text-[#E8472B]">{rupees}</span>
-              </div>
-            ))}
-          </div>
+        
         </div>
 
         {/* ── Right: Hold + Payment ── */}
@@ -487,7 +468,6 @@ function SeatRow({ seat }) {
       </div>
       <div className="text-right font-mono">
         <div className="text-xs font-semibold text-[#15130F]">{formatRupees(seat.price_cents)}</div>
-        <div className="text-[9px] text-[#706A61]">{seat.price_cents?.toLocaleString()}¢</div>
       </div>
     </div>
   );
@@ -515,12 +495,7 @@ function HoldStatusCard({ holdId, holdSeconds, holdExpired, isMock }) {
         <div className={`text-[10px] font-mono uppercase tracking-widest font-semibold ${textColor}`}>
           {holdExpired ? '⚠ Hold Expired' : isExpiring ? '⚡ Expiring Soon' : '🔒 Hold Active'}
         </div>
-        {isMock && (
-          <span className="text-[9px] font-mono text-[#C8962A] bg-[#F9F3E5] border border-[#C8962A]/30
-                           rounded px-1.5 py-0.5">
-            SIM
-          </span>
-        )}
+        
       </div>
 
       {!holdExpired && holdSeconds !== null && (
@@ -529,7 +504,7 @@ function HoldStatusCard({ holdId, holdSeconds, holdExpired, isMock }) {
             {formatCountdown(holdSeconds)}
           </div>
           <div className="text-[10px] font-mono text-[#706A61] mt-1">
-            {isMock ? '[SIMULATED] ' : ''}remaining of {HOLD_TTL_S}s hold
+            remaining to complete payment
           </div>
         </div>
       )}
@@ -540,18 +515,7 @@ function HoldStatusCard({ holdId, holdSeconds, holdExpired, isMock }) {
         </p>
       )}
 
-      <div className="font-mono text-[10px] text-[#706A61] space-y-0.5">
-        <div className="flex justify-between">
-          <span>HOLD ID</span>
-          <span className="font-semibold truncate max-w-[120px]">
-            {holdId?.substring(0, 18) || '—'}…
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>TTL</span>
-          <span>120 seconds (api-contract §6.1)</span>
-        </div>
-      </div>
+      
     </div>
   );
 }
@@ -593,11 +557,11 @@ function PaymentPanel({
             <CreditCard className="w-4 h-4 text-[#4A453D]" />
             <div className="flex-1">
               <div className="text-xs font-mono font-semibold text-[#15130F]">
-                Simulated Card
-              </div>
-              <div className="text-[10px] font-mono text-[#706A61]">
-                Backend payment simulator · No real charge
-              </div>
+                  Demo Payment
+                </div>
+                <div className="text-[10px] font-mono text-[#706A61]">
+                  Secure · No real charge
+                </div>
             </div>
             <div className="w-2 h-2 rounded-full bg-[#3F6B4F]" />
           </div>

@@ -20,7 +20,7 @@ export default function VenueOverview({ event, onNavigate }) {
               {event.venue.name} Layout
             </h2>
             <p className="text-sm text-[#4A453D] mt-1 max-w-xl">
-              5,040 total spectator seats partitioned into 3 backend-authoritative pricing tiers (VIP, PREMIUM, STANDARD). Click a section below to inspect row allocations.
+              5,040 seats across 3 tiers — VIP, Premium, and Standard. Click a section to explore seating options.
             </p>
           </div>
           <div className="text-xs font-mono text-[#706A61] flex items-center gap-2">
