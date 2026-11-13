@@ -59,6 +59,8 @@ function formatCountdown(secs) {
 export default function CheckoutPage({ onNavigate }) {
   const [view,            setView]            = useState('checkout'); // checkout | confirmation
   const [hold,            setHold]            = useState(null);
+  const [confirmedSeats,  setConfirmedSeats]  = useState([]);
+  const [confirmedTotal,  setConfirmedTotal]  = useState(0);
   const [holdLoaded,      setHoldLoaded]      = useState(false);
   const [paymentStatus,   setPaymentStatus]   = useState(PAYMENT_STATUS.IDLE);
   const [paymentResult,   setPaymentResult]   = useState(null);
@@ -156,6 +158,8 @@ export default function CheckoutPage({ onNavigate }) {
 
       // Instantly confirm and display ticket
       if (result && (result.status === 'SUCCEEDED' || result.booking_id)) {
+        setConfirmedSeats(hold?.seats || []);
+        setConfirmedTotal(totalCents);
         clearActiveHold();
         clearIdempotencyKey(holdId);
         setPaymentStatus(PAYMENT_STATUS.SUCCEEDED);
@@ -203,6 +207,18 @@ export default function CheckoutPage({ onNavigate }) {
   }, [hold]);
 
   const holdId = hold?.hold_id || hold?._sim_id;
+
+  // ── Render: Confirmation (Always prioritize confirmed ticket!) ──────────
+  if (view === 'confirmation') {
+    return (
+      <ConfirmationView
+        paymentResult={paymentResult}
+        seats={confirmedSeats.length > 0 ? confirmedSeats : seats}
+        totalCents={confirmedTotal > 0 ? confirmedTotal : totalCents}
+        onNavigate={onNavigate}
+      />
+    );
+  }
 
   // ── Render: Loading ──────────────────────────────────────────────────────
   if (!holdLoaded) {
@@ -276,17 +292,7 @@ export default function CheckoutPage({ onNavigate }) {
     );
   }
 
-  // ── Render: Confirmation ─────────────────────────────────────────────────
-  if (view === 'confirmation') {
-    return (
-      <ConfirmationView
-        paymentResult={paymentResult}
-        seats={seats}
-        totalCents={totalCents}
-        onNavigate={onNavigate}
-      />
-    );
-  }
+
 
   // ── Render: Main Checkout ────────────────────────────────────────────────
   return (
