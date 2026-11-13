@@ -33,7 +33,7 @@ class Seat(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     section: Mapped[str] = mapped_column(String(50), nullable=False, default="Main")
     tier: Mapped[str] = mapped_column(String(20), nullable=False, default=SeatTier.STANDARD.value)
-    price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=5000)
+    price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=3500)
     is_accessible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

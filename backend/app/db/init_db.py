@@ -25,9 +25,9 @@ EXPECTED_TOTAL_SEATS = 5040
 def generate_seat_layout(event_id: int) -> List[Dict[str, Any]]:
     """
     Generates exact 5,040 seat layout:
-    - VIP: Rows A-D (4 rows * 60 seats = 240 seats, $150.00)
-    - PREMIUM: Rows E-P (12 rows * 100 seats = 1,200 seats, $100.00)
-    - STANDARD: Rows Q-Z (10 rows) + AA-AH (8 rows) = 18 rows * 200 seats = 3,600 seats ($50.00)
+    - VIP: Rows A-D (4 rows * 60 seats = 240 seats, $150.00 / 15,000 cents)
+    - PREMIUM: Rows E-P (12 rows * 100 seats = 1,200 seats, $75.00 / 7,500 cents)
+    - STANDARD: Rows Q-Z (10 rows) + AA-AH (8 rows) = 18 rows * 200 seats = 3,600 seats ($35.00 / 3,500 cents)
     Total = 240 + 1,200 + 3,600 = 5,040 seats.
     """
     seats = []
@@ -61,7 +61,7 @@ def generate_seat_layout(event_id: int) -> List[Dict[str, Any]]:
                 "number": num,
                 "section": "Lower Bowl",
                 "tier": SeatTier.PREMIUM.value,
-                "price_cents": 10000,
+                "price_cents": 7500,
                 "is_accessible": (num in [1, 2]),
                 "created_at": datetime.now(timezone.utc),
             })
@@ -81,7 +81,7 @@ def generate_seat_layout(event_id: int) -> List[Dict[str, Any]]:
                 "number": num,
                 "section": "Upper Bowl",
                 "tier": SeatTier.STANDARD.value,
-                "price_cents": 5000,
+                "price_cents": 3500,
                 "is_accessible": (num in [1, 2]),
                 "created_at": datetime.now(timezone.utc),
             })

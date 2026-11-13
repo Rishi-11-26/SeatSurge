@@ -52,8 +52,12 @@ def register_exception_handlers(app: FastAPI) -> None:
             message = exc.detail
             details: dict = {}
         elif isinstance(exc.detail, dict):
+            code = exc.detail.get("code", code)
             message = exc.detail.get("message", "An error occurred.")
-            details = {k: v for k, v in exc.detail.items() if k != "message"}
+            if "details" in exc.detail and isinstance(exc.detail["details"], dict):
+                details = exc.detail["details"]
+            else:
+                details = {k: v for k, v in exc.detail.items() if k not in ("message", "code")}
         else:
             message = "An error occurred."
             details = {}

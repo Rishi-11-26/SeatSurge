@@ -194,7 +194,7 @@ Permanent booking records in the `bookings` table track the full lifecycle:
       "available": 1200,
       "held": 0,
       "sold": 0,
-      "price_cents": 10000
+      "price_cents": 7500
     },
     "STANDARD": {
       "tier": "STANDARD",
@@ -202,7 +202,7 @@ Permanent booking records in the `bookings` table track the full lifecycle:
       "available": 3600,
       "held": 0,
       "sold": 0,
-      "price_cents": 5000
+      "price_cents": 3500
     }
   },
   "timestamp": "2026-11-13T12:00:00Z"
@@ -251,16 +251,16 @@ Permanent booking records in the `bookings` table track the full lifecycle:
 ### 6.1. Create Hold (Single or Group)
 - **Method:** `POST /api/v1/events/{event_id}/holds`
 - **Headers:**
-  - `X-Session-ID: <uuid>`
-  - `X-Admission-Token: <token>`
-  - `Idempotency-Key: <uuid>`
+  - `X-Session-ID: <string>` (Required: client session identifier)
+  - `X-Admission-Token: <token>` (Optional until Phase 5 waiting room enforcement)
+  - `Idempotency-Key: <string>` (Optional: guarantees identical result on retry)
 - **Request Body:**
 ```json
 {
   "seat_ids": [101, 102, 103]
 }
 ```
-*Note: Maximum 6 seats. Must be adjacent for group reservations. All-or-nothing guarantee.*
+*Note: Maximum 6 seats per request. Seats must be in the same row and strictly adjacent (consecutive numbers). All-or-nothing atomicity via Redis Lua script.*
 - **Response (201 Created):**
 ```json
 {
@@ -269,13 +269,53 @@ Permanent booking records in the `bookings` table track the full lifecycle:
   "seat_ids": [101, 102, 103],
   "held_at": "2026-11-13T12:00:00Z",
   "expires_at": "2026-11-13T12:02:00Z",
-  "time_remaining_seconds": 120
+  "time_remaining_seconds": 120,
+  "status": "HELD"
 }
 ```
 - **Error Responses:**
-  - `409 Conflict`: `SEATS_UNAVAILABLE` (Any seat already held/sold)
+  - `409 Conflict`: `SEATS_UNAVAILABLE` (Any seat already held/sold; includes conflicting seat details)
   - `400 Bad Request`: `NOT_ADJACENT` or `EXCEEDS_GROUP_LIMIT`
-  - `401 Unauthorized`: `INVALID_ADMISSION_TOKEN`
+  - `404 Not Found`: `SEAT_NOT_FOUND`
+  - `503 Service Unavailable`: `RECOVERY_IN_PROGRESS` (Redis state reconstruction active)
+
+### 6.2. Release Hold (Manual Cancellation)
+- **Method:** `DELETE /api/v1/events/{event_id}/holds/{hold_id}`
+- **Headers:**
+  - `X-Session-ID: <string>` (Required: must match hold owner session)
+- **Response (200 OK):**
+```json
+{
+  "hold_id": "hld_98a7cf2e109",
+  "event_id": 1,
+  "released_seats": [101, 102, 103],
+  "status": "RELEASED",
+  "released_at": "2026-11-13T12:01:10Z"
+}
+```
+- **Error Responses:**
+  - `404 Not Found`: `HOLD_NOT_FOUND`
+  - `403 Forbidden`: `FORBIDDEN` (Session ID does not match hold owner)
+  - `409 Conflict`: `HOLD_PAYING` (Hold is currently in checkout/payment and cannot be cancelled)
+
+### 6.3. Inspect Hold Status
+- **Method:** `GET /api/v1/events/{event_id}/holds/{hold_id}`
+- **Headers:**
+  - `X-Session-ID: <string>` (Required)
+- **Response (200 OK):**
+```json
+{
+  "hold_id": "hld_98a7cf2e109",
+  "event_id": 1,
+  "seat_ids": [101, 102, 103],
+  "held_at": "2026-11-13T12:00:00Z",
+  "expires_at": "2026-11-13T12:02:00Z",
+  "time_remaining_seconds": 85,
+  "status": "HELD"
+}
+```
+- **Error Responses:**
+  - `404 Not Found`: `HOLD_NOT_FOUND` or `HOLD_EXPIRED`
 
 ---
 

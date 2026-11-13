@@ -8,10 +8,12 @@ class SeatRead(BaseModel):
     Authoritative single-seat representation.
 
     Field `seat_id` matches the API contract (docs/api-contract.md §4).
+    Field `id` is retained as an alias for frontend component compatibility.
     Status reflects the real-time overlay: AVAILABLE, HELD, PAYING, or SOLD.
     """
 
     seat_id: int = Field(..., description="Unique seat identifier")
+    id: Optional[int] = Field(None, description="Alias for seat_id for frontend compatibility")
     event_id: int
     row: str
     number: int

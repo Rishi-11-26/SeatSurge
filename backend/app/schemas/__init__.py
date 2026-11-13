@@ -3,6 +3,7 @@ from app.schemas.event import EventRead, EventListResponse
 from app.schemas.seat import SeatRead, SeatMapResponse, SeatAvailabilitySummary, TierAvailability
 from app.schemas.metrics import MetricsResponse
 from app.schemas.error import ErrorDetail, ErrorResponse
+from app.schemas.hold import HoldCreateRequest, HoldResponse, HoldReleaseResponse
 
 __all__ = [
     "HealthResponse",
@@ -16,4 +17,7 @@ __all__ = [
     "MetricsResponse",
     "ErrorDetail",
     "ErrorResponse",
+    "HoldCreateRequest",
+    "HoldResponse",
+    "HoldReleaseResponse",
 ]
