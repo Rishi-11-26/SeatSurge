@@ -65,5 +65,10 @@ class Settings(BaseSettings):
     REAPER_INTERVAL_SECONDS: int = 5
     MAX_GROUP_SEATS: int = 6
 
+    # Queue & Waiting Room (Phase 5)
+    QUEUE_ADMISSION_CAPACITY: int = 100
+    ADMISSION_TOKEN_TTL_SECONDS: int = 900  # 15 minutes
+    ENFORCE_ADMISSION_TOKEN: bool = False  # Set True to strictly require token on holds
+
 
 settings = Settings()

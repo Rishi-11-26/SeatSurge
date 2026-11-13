@@ -16,6 +16,7 @@ from app.redis.scripts import (
     TRANSITION_HOLD_LUA,
 )
 from app.services.recovery_service import is_recovery_complete
+from app.core.config import settings
 from app.core.logging import logger
 
 HOLD_DURATION_SECONDS = 120
@@ -174,7 +175,32 @@ class HoldService:
             except Exception as e:
                 logger.warning(f"Idempotency cache lookup failed: {e}")
 
-        # 3. Fetch seat records from database and validate existence
+        # 3. Validate Admission Token (Phase 5 Virtual Waiting Room)
+        if admission_token or settings.ENFORCE_ADMISSION_TOKEN:
+            from app.services.queue_service import QueueService
+            if not admission_token:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "ADMISSION_TOKEN_REQUIRED",
+                        "message": "A valid admission token is required to hold seats.",
+                    },
+                )
+            is_valid, err_code, err_msg = await QueueService.validate_admission_token(
+                token=admission_token,
+                event_id=event_id,
+                session_id=session_id,
+            )
+            if not is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": err_code,
+                        "message": err_msg,
+                    },
+                )
+
+        # 4. Fetch seat records from database and validate existence
         stmt = select(Seat).where(Seat.event_id == event_id, Seat.id.in_(seat_ids))
         res = await db.execute(stmt)
         seats = list(res.scalars().all())
@@ -284,6 +310,23 @@ class HoldService:
                 logger.warning(f"Failed to cache hold idempotency key: {e}")
 
         logger.info(f"Successfully claimed hold {hold_id} for seats {seat_ids}")
+
+        # 7. Broadcast seat hold update via WebSockets
+        try:
+            from app.services.websocket_service import ws_manager
+            updates = [{"seat_id": sid, "status": "HELD", "hold_id": hold_id} for sid in seat_ids]
+            await ws_manager.publish_seat_status_change(event_id, updates)
+        except Exception as ws_err:
+            logger.warning(f"Failed to broadcast hold to WebSockets: {ws_err}")
+
+        # 8. Mark admission token as consumed for this hold
+        if admission_token:
+            try:
+                from app.services.queue_service import QueueService
+                await QueueService.bind_token_to_hold(admission_token, hold_id)
+            except Exception as e:
+                logger.debug(f"Could not bind admission token: {e}")
+
         return response
 
     @staticmethod
@@ -341,6 +384,18 @@ class HoldService:
             )
 
         released_count = int(lua_result[1]) if len(lua_result) > 1 else 0
+        released_seats_csv = lua_result[2] if len(lua_result) > 2 else ""
+
+        # Broadcast seat release to WebSocket subscribers
+        if released_seats_csv:
+            try:
+                from app.services.websocket_service import ws_manager
+                released_ids = [int(s) for s in released_seats_csv.split(",") if s]
+                updates = [{"seat_id": sid, "status": "AVAILABLE", "hold_id": None} for sid in released_ids]
+                await ws_manager.publish_seat_status_change(event_id, updates)
+            except Exception as ws_err:
+                logger.warning(f"Failed to broadcast release to WebSockets: {ws_err}")
+
         logger.info(f"Released hold {hold_id} ({released_count} seats)")
         return HoldReleaseResponse(
             hold_id=hold_id,

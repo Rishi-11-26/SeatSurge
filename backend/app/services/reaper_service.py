@@ -90,6 +90,16 @@ async def reap_expired_holds_once() -> Tuple[int, int]:
                 total_reaped_holds += 1
                 total_reaped_seats += num_seats
                 logger.info(f"Reaper released expired hold {hold_id} ({num_seats} seats: [{seat_ids}])")
+
+                # Broadcast seat release to WebSocket subscribers
+                if seat_ids:
+                    try:
+                        from app.services.websocket_service import ws_manager
+                        reaped_ids = [int(s) for s in seat_ids.split(",") if s]
+                        updates = [{"seat_id": sid, "status": "AVAILABLE", "hold_id": None} for sid in reaped_ids]
+                        await ws_manager.publish_seat_status_change(event_id, updates)
+                    except Exception as exc:
+                        logger.warning(f"Failed to broadcast reaper release to WebSockets: {exc}")
             elif outcome == "PROTECTED_PAYING":
                 logger.debug(f"Hold {hold_id} is in PAYING state. Excluded from reaper sweep.")
         except Exception as exc:

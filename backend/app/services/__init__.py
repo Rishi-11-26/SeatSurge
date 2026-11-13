@@ -5,6 +5,8 @@ from app.services.metrics_service import metrics_tracker
 from app.services.hold_service import HoldService
 from app.services.reaper_service import hold_expiry_reaper, reap_expired_holds_once
 from app.services.recovery_service import RedisRecoveryService
+from app.services.websocket_service import ws_manager
+from app.services.queue_service import QueueService
 
 __all__ = [
     "EventService",
@@ -15,4 +17,6 @@ __all__ = [
     "hold_expiry_reaper",
     "reap_expired_holds_once",
     "RedisRecoveryService",
+    "ws_manager",
+    "QueueService",
 ]

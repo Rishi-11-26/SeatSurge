@@ -136,7 +136,7 @@ local current_holds = tonumber(redis.call('GET', counter_key) or '0')
 local new_val = math.max(0, current_holds - num_seats)
 redis.call('SET', counter_key, tostring(new_val))
 
-return {'OK', tostring(num_seats)}
+return {'OK', tostring(num_seats), seat_ids_csv or ''}
 """
 
 

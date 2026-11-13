@@ -11,6 +11,8 @@ from app.db.init_db import init_db
 from app.services.metrics_service import metrics_tracker
 from app.services.reaper_service import hold_expiry_reaper
 from app.services.recovery_service import RedisRecoveryService, mark_recovery_complete, mark_recovery_skipped
+from app.services.websocket_service import ws_manager
+from app.api.v1.endpoints.ws import websocket_events_endpoint, router as ws_router
 from app.api.v1.router import api_v1_router
 from app.api.v1.endpoints.health import get_health
 from app.core.exceptions import register_exception_handlers
@@ -57,6 +59,7 @@ async def lifespan(app: FastAPI):
 
         # Start background services
         hold_expiry_reaper.start()
+        ws_manager.start_pubsub_listener()
 
     yield
 
@@ -64,6 +67,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Shutting down {settings.PROJECT_NAME} [{settings.INSTANCE_ID}]...")
     if settings.APP_ENV != "test":
         await hold_expiry_reaper.stop()
+        await ws_manager.stop_pubsub_listener()
     await close_redis()
     await engine.dispose()
     logger.info("Database and Redis connections gracefully cleaned up.")
@@ -127,3 +131,6 @@ async def direct_health():
 
 # API V1 Router
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+
+# Real-Time WebSocket endpoint at root path /ws/events (matching frontend VITE_WS_BASE_URL default)
+app.add_api_websocket_route("/ws/events", websocket_events_endpoint)

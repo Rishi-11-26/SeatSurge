@@ -229,7 +229,8 @@ Permanent booking records in the `bookings` table track the full lifecycle:
   "queue_position": 42,
   "estimated_wait_seconds": 15,
   "admission_token": null,
-  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "event_id": 1
 }
 ```
 - **Response when admitted (200 OK):**
@@ -238,9 +239,34 @@ Permanent booking records in the `bookings` table track the full lifecycle:
   "status": "ADMITTED",
   "queue_position": 0,
   "estimated_wait_seconds": 0,
-  "admission_token": "adm_tok_a8f9c0e2193b4",
+  "admission_token": "adm_9b1deb4d_1_1763000000_a8f9c0e2193b4",
   "token_expires_at": "2026-11-13T12:15:00Z",
-  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "event_id": 1
+}
+```
+
+### 5.2. Get Queue Status (Polling)
+- **Method:** `GET /api/v1/queue/status?event_id={event_id}`
+- **Headers:** `X-Session-ID: <uuid>`
+- **Response (200 OK):** Identical schema to 5.1 (returns current WAITING rank or ADMITTED token).
+
+### 5.3. Leave Waiting Room
+- **Method:** `POST /api/v1/queue/leave`
+- **Headers:** `X-Session-ID: <uuid>`
+- **Request Body:**
+```json
+{
+  "event_id": 1
+}
+```
+- **Response (200 OK):**
+```json
+{
+  "status": "LEFT",
+  "message": "Successfully left the queue.",
+  "session_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "event_id": 1
 }
 ```
 
