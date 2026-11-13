@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "name": "seatsurge",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://seatsurge-7mp2.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://seatsurge-7mp2.onrender.com/health"
+    },
+    {
+      "source": "/docs",
+      "destination": "https://seatsurge-7mp2.onrender.com/docs"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "https://seatsurge-7mp2.onrender.com/openapi.json"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
