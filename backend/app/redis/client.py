@@ -15,8 +15,16 @@ def init_redis_pool() -> aioredis.ConnectionPool:
         return redis_pool
 
     if redis_pool is None:
+        url = settings.redis_url
+        masked_url = url
+        if "@" in url and "://" in url:
+            scheme, rest = url.split("://", 1)
+            creds, host = rest.split("@", 1)
+            masked_url = f"{scheme}://***:***@{host}"
+        logger.info(f"Connecting to Redis at {masked_url}")
+
         redis_pool = aioredis.ConnectionPool.from_url(
-            settings.redis_url,
+            url,
             max_connections=50,
             decode_responses=True,
             socket_connect_timeout=10.0,
