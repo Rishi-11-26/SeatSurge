@@ -65,12 +65,32 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
+        # 1. Direct REDIS_URL provided
         if self.REDIS_URL:
-            return self.REDIS_URL
-        proto = "rediss" if self.REDIS_SSL else "redis"
+            raw = self.REDIS_URL.strip().strip('"\'')
+            if raw.startswith("https://"):
+                raw = "rediss://" + raw[8:]
+            elif raw.startswith("http://"):
+                raw = "redis://" + raw[7:]
+            elif not (raw.startswith("redis://") or raw.startswith("rediss://") or raw.startswith("unix://")):
+                proto = "rediss" if ("upstash" in raw.lower() or self.REDIS_SSL) else "redis"
+                raw = f"{proto}://{raw}"
+            return raw
+
+        # 2. Check if REDIS_HOST contains a full URL scheme
+        raw_host = (self.REDIS_HOST or "localhost").strip().strip('"\'')
+        if raw_host.startswith(("redis://", "rediss://", "unix://")):
+            return raw_host
+        if raw_host.startswith("https://"):
+            return "rediss://" + raw_host[8:]
+        if raw_host.startswith("http://"):
+            return "redis://" + raw_host[7:]
+
+        # 3. Assemble from components
+        proto = "rediss" if (self.REDIS_SSL or "upstash" in raw_host.lower()) else "redis"
         if self.REDIS_PASSWORD:
-            return f"{proto}://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"{proto}://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+            return f"{proto}://:{self.REDIS_PASSWORD}@{raw_host}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"{proto}://{raw_host}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # Ticketing Business Rules
     TOTAL_SEATS: int = 5040
