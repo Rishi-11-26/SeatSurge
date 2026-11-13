@@ -57,6 +57,9 @@ class Settings(BaseSettings):
 
     # Redis Cache & Coordination
     REDIS_URL: Union[str, None] = None
+    UPSTASH_REDIS_URL: Union[str, None] = None
+    REDIS_URI: Union[str, None] = None
+    REDISCLOUD_URL: Union[str, None] = None
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
@@ -65,9 +68,10 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        # 1. Direct REDIS_URL provided
-        if self.REDIS_URL:
-            raw = self.REDIS_URL.strip().strip('"\'')
+        # 1. Direct URL provided via any standard environment variable
+        url_candidate = self.REDIS_URL or self.UPSTASH_REDIS_URL or self.REDIS_URI or self.REDISCLOUD_URL
+        if url_candidate:
+            raw = url_candidate.strip().strip('"\'')
             if raw.startswith("https://"):
                 raw = "rediss://" + raw[8:]
             elif raw.startswith("http://"):
@@ -79,6 +83,9 @@ class Settings(BaseSettings):
 
         # 2. Check if REDIS_HOST contains a full URL scheme
         raw_host = (self.REDIS_HOST or "localhost").strip().strip('"\'')
+        if raw_host in ("rediss", "redis"):
+            raw_host = "localhost"
+
         if raw_host.startswith(("redis://", "rediss://", "unix://")):
             return raw_host
         if raw_host.startswith("https://"):
