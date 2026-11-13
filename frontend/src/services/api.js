@@ -5,10 +5,14 @@
  */
 
 const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
-export const API_BASE_URL = env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
-export const GATEWAY_ROOT = env.VITE_GATEWAY_ROOT || 'http://localhost:8000';
-const defaultWsProto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
-export const WS_BASE_URL = env.VITE_WS_BASE_URL || `${defaultWsProto}//localhost:8000/ws/events`;
+const isBrowser = typeof window !== 'undefined';
+const hostOrigin = isBrowser ? window.location.origin : 'http://localhost:8000';
+const wsProto = (isBrowser && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+const wsHost = isBrowser ? window.location.host : 'localhost:8000';
+
+export const API_BASE_URL = env.VITE_API_BASE_URL || `${hostOrigin}/api/v1`;
+export const GATEWAY_ROOT = env.VITE_GATEWAY_ROOT || hostOrigin;
+export const WS_BASE_URL = env.VITE_WS_BASE_URL || `${wsProto}//${wsHost}/ws/events`;
 
 /**
  * Stable Session ID stored in localStorage across tabs/refreshes

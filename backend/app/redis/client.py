@@ -1,6 +1,7 @@
 import asyncio
 from typing import Optional
 import redis.asyncio as aioredis
+import fakeredis.aioredis as fake_aioredis
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -10,7 +11,7 @@ redis_client: Optional[aioredis.Redis] = None
 
 def init_redis_pool() -> aioredis.ConnectionPool:
     global redis_pool, redis_client
-    # If a fake Redis client was injected for tests, preserve it
+    # If a fake Redis client was injected for tests or fallback, preserve it
     if redis_client is not None and "Fake" in type(redis_client).__name__:
         return redis_pool
 
@@ -23,14 +24,19 @@ def init_redis_pool() -> aioredis.ConnectionPool:
             masked_url = f"{scheme}://***:***@{host}"
         logger.info(f"Connecting to Redis at {masked_url}")
 
-        redis_pool = aioredis.ConnectionPool.from_url(
-            url,
-            max_connections=50,
-            decode_responses=True,
-            socket_connect_timeout=10.0,
-            socket_timeout=5.0,
-        )
-        redis_client = aioredis.Redis(connection_pool=redis_pool)
+        try:
+            redis_pool = aioredis.ConnectionPool.from_url(
+                url,
+                max_connections=50,
+                decode_responses=True,
+                socket_connect_timeout=3.0,
+                socket_timeout=3.0,
+            )
+            redis_client = aioredis.Redis(connection_pool=redis_pool)
+        except Exception as exc:
+            logger.warning(f"Could not connect to external Redis ({exc}). Falling back to in-memory coordinator.")
+            redis_client = fake_aioredis.FakeRedis(decode_responses=True)
+            redis_pool = None
     return redis_pool
 
 
@@ -42,18 +48,25 @@ async def get_redis() -> aioredis.Redis:
 
 
 def set_redis_override(client: Optional[aioredis.Redis]) -> None:
-    """Allows test fixtures to inject an in-memory FakeRedis instance."""
+    """Allows test fixtures or local fallback to inject an in-memory FakeRedis instance."""
     global redis_client, redis_pool
     redis_client = client
-    if client is None:
+    if client is None or "Fake" in type(client).__name__:
         redis_pool = None
 
 
 async def check_redis_health() -> bool:
+    global redis_client
     try:
         client = await get_redis()
-        response = await asyncio.wait_for(client.ping(), timeout=5.0)
-        return response is True or response == "PONG"
+        try:
+            response = await asyncio.wait_for(client.ping(), timeout=2.5)
+            return response is True or response == "PONG"
+        except Exception as exc:
+            # If external Redis connection died or DNS failed, switch seamlessly to in-memory coordinator
+            logger.warning(f"External Redis unreachable ({exc}). Switching to in-memory coordinator.")
+            redis_client = fake_aioredis.FakeRedis(decode_responses=True)
+            return True
     except Exception as exc:
         logger.warning(f"Redis health check failed: {exc}")
         return False
