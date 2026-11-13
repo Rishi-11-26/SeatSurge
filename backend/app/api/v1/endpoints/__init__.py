@@ -4,6 +4,7 @@ from app.api.v1.endpoints.metrics import router as metrics_router
 from app.api.v1.endpoints.holds import router as holds_router
 from app.api.v1.endpoints.ws import router as ws_router
 from app.api.v1.endpoints.queue import router as queue_router
+from app.api.v1.endpoints.checkout import router as checkout_router
 
 __all__ = [
     "health_router",
@@ -12,4 +13,5 @@ __all__ = [
     "holds_router",
     "ws_router",
     "queue_router",
+    "checkout_router",
 ]

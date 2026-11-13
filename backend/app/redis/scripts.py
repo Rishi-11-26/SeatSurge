@@ -279,7 +279,76 @@ elseif target_status == 'SOLD' then
     local current = tonumber(redis.call('GET', counter_key) or '0')
     redis.call('SET', counter_key, tostring(math.max(0, current - num_seats)))
     return {'OK', 'SOLD'}
+elseif target_status == 'REVERT_HELD' then
+    redis.call('HSET', hold_meta_key, 'status', 'HELD')
+    if seat_ids_csv then
+        for seat_id in string.gmatch(seat_ids_csv, '([^,]+)') do
+            redis.call('HSET', seat_statuses_key, seat_id, 'HELD')
+        end
+    end
+    local time_res = redis.call('TIME')
+    local now_sec = tonumber(time_res[1])
+    local exp = tonumber(redis.call('HGET', hold_meta_key, 'expires_at') or '0')
+    if exp <= now_sec then
+        exp = now_sec + 60
+        redis.call('HSET', hold_meta_key, 'expires_at', tostring(exp))
+    end
+    redis.call('ZADD', expiry_zset_key, exp, hold_id)
+    return {'OK', 'HELD', tostring(exp)}
 end
 
 return {'INVALID_TARGET'}
+"""
+
+
+# ── 6. ATOMIC FIFO QUEUE ENQUEUE ─────────────────────────────────────────────
+# KEYS[1] = waiting_zset (Sorted Set: session_id -> order_seq)
+# KEYS[2] = order_counter (String: integer counter)
+# ARGV[1] = session_id
+#
+# Atomically checks if session_id is already in waiting_zset.
+# If already present, returns existing score without incrementing counter.
+# If not present, atomically increments counter and adds session to zset with that score.
+ENQUEUE_FIFO_LUA = """
+local waiting_zset = KEYS[1]
+local counter_key  = KEYS[2]
+local session_id   = ARGV[1]
+
+local existing = redis.call('ZSCORE', waiting_zset, session_id)
+if existing then
+    return existing
+end
+
+local seq = redis.call('INCR', counter_key)
+redis.call('ZADD', waiting_zset, seq, session_id)
+return tostring(seq)
+"""
+
+
+# ── 7. ATOMIC WEBSOCKET EVENT SEQUENCE & LOG INSERTION ───────────────────────
+# KEYS[1] = ws_seq_key (String: monotonic sequence counter)
+# KEYS[2] = ws_event_log_key (List: capped event replay buffer)
+# KEYS[3] = ws_channel_key (Pub/Sub channel)
+# ARGV[1] = event_id
+# ARGV[2] = updates_json
+# ARGV[3] = timestamp_iso
+#
+# Atomically increments sequence, formats payload, pushes to log, trims to 500,
+# and publishes to pub/sub channel.
+PUBLISH_WS_EVENT_LUA = """
+local seq_key    = KEYS[1]
+local log_key    = KEYS[2]
+local chan_key   = KEYS[3]
+local event_id   = ARGV[1]
+local updates    = ARGV[2]
+local timestamp  = ARGV[3]
+
+local new_seq = redis.call('INCR', seq_key)
+local payload = '{"type":"SEAT_STATUS_CHANGE","seq":' .. new_seq .. ',"event_id":' .. event_id .. ',"updates":' .. updates .. ',"timestamp":"' .. timestamp .. '"}'
+
+redis.call('RPUSH', log_key, payload)
+redis.call('LTRIM', log_key, -500, -1)
+redis.call('PUBLISH', chan_key, payload)
+
+return {tostring(new_seq), payload}
 """

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, Set, List, Optional, Any
 from fastapi import WebSocket
 from app.redis.client import get_redis
+from app.redis.scripts import PUBLISH_WS_EVENT_LUA
 from app.core.logging import logger
 
 
@@ -80,40 +81,62 @@ class WebSocketManager:
     ) -> Dict[str, Any]:
         """
         Publishes atomic seat status updates to all subscribers:
-        1. Atomically increments event sequence number via Redis INCR.
-        2. Appends to the Redis event replay log (capped at 500 items).
-        3. Publishes to Redis Pub/Sub channel 'events:{event_id}:seat_updates'.
-        4. Broadcasts immediately to all locally connected WebSockets.
+        1. Atomically increments event sequence number and appends to event log
+           via Redis Lua script (guarantees no sequence gaps without replayable events).
+        2. Publishes to Redis Pub/Sub channel 'events:{event_id}:seat_updates'.
+        3. Broadcasts immediately to all locally connected WebSockets.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
-        new_seq = 1
+        updates_json = json.dumps(updates)
+        seq_key = f"event:{event_id}:ws_seq"
+        log_key = f"event:{event_id}:ws_event_log"
+        channel = f"events:{event_id}:seat_updates"
+
+        new_seq = None
+        payload = None
 
         try:
             redis = await get_redis()
-            new_seq = await redis.incr(f"event:{event_id}:ws_seq")
+            res = await redis.eval(
+                PUBLISH_WS_EVENT_LUA,
+                3,
+                seq_key,
+                log_key,
+                channel,
+                str(event_id),
+                updates_json,
+                now_iso,
+            )
+            if res and len(res) >= 2:
+                new_seq = int(res[0])
+                payload = json.loads(res[1])
         except Exception as exc:
-            logger.warning(f"[WebSocket] Error incrementing sequence number in Redis: {exc}")
+            logger.warning(f"[WebSocket] Error executing atomic publish Lua script: {exc}")
+            # Fallback for mock environments without Lua eval
+            try:
+                redis = await get_redis()
+                new_seq = await redis.incr(seq_key)
+                payload = {
+                    "type": "SEAT_STATUS_CHANGE",
+                    "seq": int(new_seq),
+                    "event_id": event_id,
+                    "updates": updates,
+                    "timestamp": now_iso,
+                }
+                await redis.rpush(log_key, json.dumps(payload))
+                await redis.ltrim(log_key, -500, -1)
+                await redis.publish(channel, json.dumps(payload))
+            except Exception as e:
+                logger.debug(f"[WebSocket] Fallback publish error: {e}")
 
-        payload = {
-            "type": "SEAT_STATUS_CHANGE",
-            "seq": int(new_seq),
-            "event_id": event_id,
-            "updates": updates,
-            "timestamp": now_iso,
-        }
-
-        # Store in recent event log for gap resync (capped to 500 items)
-        try:
-            redis = await get_redis()
-            log_key = f"event:{event_id}:ws_event_log"
-            await redis.rpush(log_key, json.dumps(payload))
-            await redis.ltrim(log_key, -500, -1)
-
-            # Publish to Redis Pub/Sub channel
-            channel = f"events:{event_id}:seat_updates"
-            await redis.publish(channel, json.dumps(payload))
-        except Exception as exc:
-            logger.debug(f"[WebSocket] Redis pubsub/log error (handled gracefully): {exc}")
+        if not payload:
+            payload = {
+                "type": "SEAT_STATUS_CHANGE",
+                "seq": int(new_seq or 1),
+                "event_id": event_id,
+                "updates": updates,
+                "timestamp": now_iso,
+            }
 
         # Broadcast directly to local WebSocket clients
         await self.broadcast_to_local(event_id, payload)

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.core.rate_limit import check_rate_limit, get_client_identifier
+from app.ml.bot_detector import check_bot_behavior
 from app.schemas.hold import HoldCreateRequest, HoldResponse, HoldReleaseResponse
 from app.services.hold_service import HoldService
 
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/events/{event_id}/holds", tags=["Atomic Seat Holds"]
     "",
     response_model=HoldResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit), Depends(check_bot_behavior)],
 )
 async def create_seat_hold(
     event_id: int,

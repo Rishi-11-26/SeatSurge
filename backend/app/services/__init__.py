@@ -7,6 +7,7 @@ from app.services.reaper_service import hold_expiry_reaper, reap_expired_holds_o
 from app.services.recovery_service import RedisRecoveryService
 from app.services.websocket_service import ws_manager
 from app.services.queue_service import QueueService
+from app.services.checkout_service import CheckoutService
 
 __all__ = [
     "EventService",
@@ -19,4 +20,5 @@ __all__ = [
     "RedisRecoveryService",
     "ws_manager",
     "QueueService",
+    "CheckoutService",
 ]

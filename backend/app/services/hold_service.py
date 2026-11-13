@@ -397,6 +397,14 @@ class HoldService:
                 logger.warning(f"Failed to broadcast release to WebSockets: {ws_err}")
 
         logger.info(f"Released hold {hold_id} ({released_count} seats)")
+
+        # Release admission slot and promote next waiting user in queue
+        try:
+            from app.services.queue_service import QueueService
+            await QueueService.release_admission_slot(event_id, session_id)
+        except Exception as q_err:
+            logger.debug(f"Failed to release queue slot on hold release: {q_err}")
+
         return HoldReleaseResponse(
             hold_id=hold_id,
             message="Hold released successfully.",

@@ -40,6 +40,13 @@ async def reap_expired_holds_once() -> Tuple[int, int]:
     expiry_zset_key = "hold_expiry_zset"
     counter_key = "holds:active:count"
 
+    # Clean up expired queue admissions and promote waiting sessions even if no new client polls
+    try:
+        from app.services.queue_service import QueueService
+        await QueueService.cleanup_expired_admissions(event_id=1)
+    except Exception as exc:
+        logger.debug(f"Error running queue admission cleanup in reaper: {exc}")
+
     try:
         # Find all holds where expires_at <= current time
         # Using zrangebyscore with limit to prevent blocking event loop on large bursts
@@ -72,6 +79,13 @@ async def reap_expired_holds_once() -> Tuple[int, int]:
             pass
 
         seat_statuses_key = f"event:{event_id}:seat_statuses"
+        session_id = None
+        try:
+            stored_session = await redis.hget(hold_meta_key, "session_id")
+            if stored_session:
+                session_id = stored_session
+        except Exception:
+            pass
 
         try:
             lua_res = await redis.eval(
@@ -100,6 +114,14 @@ async def reap_expired_holds_once() -> Tuple[int, int]:
                         await ws_manager.publish_seat_status_change(event_id, updates)
                     except Exception as exc:
                         logger.warning(f"Failed to broadcast reaper release to WebSockets: {exc}")
+
+                # Release queue capacity slot and promote next waiting user in FIFO queue
+                if session_id:
+                    try:
+                        from app.services.queue_service import QueueService
+                        await QueueService.release_admission_slot(event_id, session_id)
+                    except Exception as q_err:
+                        logger.debug(f"Failed to release queue slot on reaper expiry: {q_err}")
             elif outcome == "PROTECTED_PAYING":
                 logger.debug(f"Hold {hold_id} is in PAYING state. Excluded from reaper sweep.")
         except Exception as exc:

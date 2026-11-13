@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Tuple, Optional, Dict, Any
 from app.redis.client import get_redis
+from app.redis.scripts import ENQUEUE_FIFO_LUA
 from app.core.config import settings
 from app.core.logging import logger
 from app.schemas.queue import QueueResponse, QueueLeaveResponse
@@ -212,12 +213,24 @@ class QueueService:
                     event_id=event_id,
                 )
 
-        # 5. Over capacity or behind other users -> enqueue in waiting sorted set
+        # 5. Over capacity or behind other users -> enqueue in waiting sorted set atomically
         if waiting_score is None:
             try:
-                await redis.zadd(waiting_zset, {session_id: now})
+                # Atomic Lua script: INCR counter + ZADD into waiting zset in a single execution step
+                await redis.eval(
+                    ENQUEUE_FIFO_LUA,
+                    2,
+                    waiting_zset,
+                    f"queue:event:{event_id}:order_counter",
+                    session_id,
+                )
             except Exception as exc:
-                logger.warning(f"[QueueService] Error adding to waiting queue: {exc}")
+                logger.warning(f"[QueueService] Error adding to waiting queue via Lua: {exc}")
+                try:
+                    order_seq = await redis.incr(f"queue:event:{event_id}:order_counter")
+                    await redis.zadd(waiting_zset, {session_id: float(order_seq)})
+                except Exception:
+                    pass
 
         try:
             rank = await redis.zrank(waiting_zset, session_id)
@@ -237,6 +250,33 @@ class QueueService:
             session_id=session_id,
             event_id=event_id,
         )
+
+    @classmethod
+    async def release_admission_slot(cls, event_id: int, session_id: str) -> bool:
+        """
+        Releases an admitted session's capacity slot and immediately promotes the
+        next waiting user in FIFO queue.
+        Invoked on:
+        - Manual hold release (user abandons cart before payment).
+        - Hold expiry (user timed out after 120s without paying).
+        - Checkout completion (booking confirmed, freeing active shopping capacity).
+        - Queue leave.
+        """
+        redis = await get_redis()
+        admitted_zset = f"queue:event:{event_id}:admitted"
+        token_key = f"queue:token:{session_id}:{event_id}"
+
+        try:
+            removed = await redis.zrem(admitted_zset, session_id)
+            await redis.delete(token_key)
+            if removed:
+                logger.info(f"[QueueService] Released admission slot for session {session_id} on event {event_id}.")
+                await cls.promote_next_waiting(event_id)
+                return True
+        except Exception as exc:
+            logger.debug(f"[QueueService] Error releasing admission slot: {exc}")
+
+        return False
 
     @classmethod
     async def leave_queue(cls, event_id: int, session_id: str) -> QueueLeaveResponse:
@@ -311,3 +351,38 @@ class QueueService:
             logger.debug(f"[QueueService] Error during promote_next_waiting: {exc}")
 
         return None
+
+    @classmethod
+    async def cleanup_expired_admissions(cls, event_id: int = 1) -> int:
+        """
+        Periodically prunes expired admitted tokens from the admitted set even when
+        no new users poll or enter the queue, and automatically promotes waiting sessions
+        into freed capacity slots.
+        Returns the number of expired admissions cleaned up.
+        """
+        redis = await get_redis()
+        now = time.time()
+        admitted_zset = f"queue:event:{event_id}:admitted"
+        try:
+            # Find all expired admitted sessions
+            expired = await redis.zrangebyscore(admitted_zset, min=0, max=now)
+            if not expired:
+                return 0
+            count = 0
+            for session_id in expired:
+                await redis.zrem(admitted_zset, session_id)
+                await redis.delete(f"queue:token:{session_id}:{event_id}")
+                count += 1
+
+            # Promote waiting users into the newly freed capacity
+            while True:
+                promoted = await cls.promote_next_waiting(event_id)
+                if not promoted:
+                    break
+
+            if count > 0:
+                logger.info(f"[QueueService] Cleaned up {count} expired admissions for event {event_id}.")
+            return count
+        except Exception as exc:
+            logger.debug(f"[QueueService] Error in cleanup_expired_admissions: {exc}")
+            return 0

@@ -1,6 +1,7 @@
 from typing import Optional
-from fastapi import APIRouter, Header, Request, status, Query
-from app.core.rate_limit import get_client_identifier
+from fastapi import APIRouter, Depends, Header, Request, status, Query
+from app.core.rate_limit import get_client_identifier, check_rate_limit
+from app.ml.bot_detector import check_bot_behavior
 from app.schemas.queue import (
     QueueEnterRequest,
     QueueResponse,
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/queue", tags=["Virtual Waiting Room"])
     "/enter",
     response_model=QueueResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(check_rate_limit), Depends(check_bot_behavior)],
 )
 async def enter_queue_endpoint(
     request: Request,

@@ -4,6 +4,13 @@ from app.schemas.seat import SeatRead, SeatMapResponse, SeatAvailabilitySummary,
 from app.schemas.metrics import MetricsResponse
 from app.schemas.error import ErrorDetail, ErrorResponse
 from app.schemas.hold import HoldCreateRequest, HoldResponse, HoldReleaseResponse
+from app.schemas.queue import QueueResponse, QueueLeaveResponse
+from app.schemas.checkout import (
+    CheckoutPayRequest,
+    CheckoutPayResponse,
+    CheckoutReconcileRequest,
+    CheckoutPaymentStatusResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -20,4 +27,10 @@ __all__ = [
     "HoldCreateRequest",
     "HoldResponse",
     "HoldReleaseResponse",
+    "QueueResponse",
+    "QueueLeaveResponse",
+    "CheckoutPayRequest",
+    "CheckoutPayResponse",
+    "CheckoutReconcileRequest",
+    "CheckoutPaymentStatusResponse",
 ]

@@ -198,3 +198,151 @@ def test_token_single_use_enforcement(client: TestClient):
     res2 = client.post("/api/v1/events/1/holds", json={"seat_ids": [306]}, headers=headers)
     assert res2.status_code == 403
     assert res2.json()["error"]["code"] == "ADMISSION_TOKEN_ALREADY_USED"
+
+
+def test_manual_hold_release_frees_queue_capacity_and_promotes(client: TestClient, monkeypatch):
+    """When an admitted user manually releases their hold, their queue slot is freed and the next user is promoted."""
+    monkeypatch.setattr(settings, "QUEUE_ADMISSION_CAPACITY", 1)
+
+    sess_a = "admitted_cart_abandoner"
+    sess_b = "waiting_queue_user_next"
+
+    # User A enters -> Admitted
+    r_a = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_a})
+    tok_a = r_a.json()["admission_token"]
+
+    # User B enters -> Waiting at pos 1
+    r_b = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_b})
+    assert r_b.json()["status"] == "WAITING"
+    assert r_b.json()["queue_position"] == 1
+
+    # User A claims seat 310
+    h_a = client.post(
+        "/api/v1/events/1/holds",
+        json={"seat_ids": [310]},
+        headers={"X-Session-ID": sess_a, "X-Admission-Token": tok_a},
+    )
+    assert h_a.status_code == 201
+    hold_id = h_a.json()["hold_id"]
+
+    # User A manually releases hold -> frees queue slot
+    rel_res = client.delete(
+        f"/api/v1/events/1/holds/{hold_id}",
+        headers={"X-Session-ID": sess_a},
+    )
+    assert rel_res.status_code == 200
+
+    # User B polls -> now ADMITTED!
+    poll_b = client.get("/api/v1/queue/status?event_id=1", headers={"X-Session-ID": sess_b})
+    assert poll_b.status_code == 200
+    assert poll_b.json()["status"] == "ADMITTED"
+    assert poll_b.json()["admission_token"] is not None
+
+
+@pytest.mark.asyncio
+async def test_hold_expiry_frees_queue_capacity_and_promotes(client: TestClient, monkeypatch, setup_fake_redis):
+    """When a hold expires and is reaped, the abandoned queue slot is freed and the next user is promoted."""
+    from app.services.reaper_service import reap_expired_holds_once
+
+    monkeypatch.setattr(settings, "QUEUE_ADMISSION_CAPACITY", 1)
+    redis = setup_fake_redis
+
+    sess_x = "hold_abandoner_sess"
+    sess_y = "next_in_line_sess"
+
+    # User X admitted
+    rx = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_x})
+    tok_x = rx.json()["admission_token"]
+
+    # User Y queued at pos 1
+    ry = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_y})
+    assert ry.json()["status"] == "WAITING"
+    assert ry.json()["queue_position"] == 1
+
+    # User X holds seat 311
+    hx = client.post(
+        "/api/v1/events/1/holds",
+        json={"seat_ids": [311]},
+        headers={"X-Session-ID": sess_x, "X-Admission-Token": tok_x},
+    )
+    assert hx.status_code == 201
+    hold_id = hx.json()["hold_id"]
+
+    # Simulate expiry by backdating score in hold_expiry_zset
+    now = int(time.time())
+    await redis.zadd("hold_expiry_zset", {hold_id: now - 10})
+
+    # Trigger reaper sweep -> reaps hold and releases queue slot
+    reaped_holds, _ = await reap_expired_holds_once()
+    assert reaped_holds >= 1
+
+    # User Y polls -> now promoted to ADMITTED!
+    poll_y = client.get("/api/v1/queue/status?event_id=1", headers={"X-Session-ID": sess_y})
+    assert poll_y.status_code == 200
+    assert poll_y.json()["status"] == "ADMITTED"
+    assert poll_y.json()["admission_token"] is not None
+
+
+def test_concurrent_queue_entries_strict_fifo_ordering(client: TestClient, monkeypatch):
+    """Simultaneous queue entries with capacity=1 receive strictly unique, monotonic positions."""
+    monkeypatch.setattr(settings, "QUEUE_ADMISSION_CAPACITY", 1)
+
+    sessions = [f"simultaneous_user_{i}" for i in range(10)]
+    results = []
+
+    for s in sessions:
+        r = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": s})
+        results.append(r.json())
+
+    admitted = [r for r in results if r["status"] == "ADMITTED"]
+    waiting = [r for r in results if r["status"] == "WAITING"]
+
+    assert len(admitted) == 1
+    assert len(waiting) == 9
+
+    # Verify positions are strictly consecutive 1..9 with zero duplicates
+    positions = sorted([w["queue_position"] for w in waiting])
+    assert positions == list(range(1, 10))
+
+
+@pytest.mark.asyncio
+async def test_periodic_cleanup_of_expired_admissions_promotes_waiting(client: TestClient, monkeypatch):
+    """
+    Expired admitted sessions are pruned and waiting users are automatically promoted
+    by background cleanup even when no new user enters or polls the queue.
+    """
+    from app.services.reaper_service import reap_expired_holds_once
+    from app.redis.client import get_redis
+
+    monkeypatch.setattr(settings, "QUEUE_ADMISSION_CAPACITY", 1)
+    redis = await get_redis()
+    await redis.flushdb()
+
+    sess_a = "idle_admitted_user"
+    sess_b = "patient_waiting_user"
+
+    # User A admitted
+    res_a = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_a})
+    assert res_a.json()["status"] == "ADMITTED"
+
+    # User B waiting
+    res_b = client.post("/api/v1/queue/enter", json={"event_id": 1}, headers={"X-Session-ID": sess_b})
+    assert res_b.json()["status"] == "WAITING"
+    assert res_b.json()["queue_position"] == 1
+
+    # Simulate User A's admission token expiring in Redis (score in the past)
+    now = int(time.time())
+    await redis.zadd("queue:event:1:admitted", {sess_a: now - 30})
+
+    # Run reaper sweep (which includes QueueService.cleanup_expired_admissions)
+    await reap_expired_holds_once()
+
+    # Verify User B is now directly in admitted set with an active admission token!
+    b_score = await redis.zscore("queue:event:1:admitted", sess_b)
+    assert b_score is not None
+    assert b_score > now
+    b_token = await redis.get(f"queue:token:{sess_b}:1")
+    assert b_token is not None
+    assert b_token.startswith("adm_")
+
+

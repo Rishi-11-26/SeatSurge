@@ -132,3 +132,56 @@ def test_websocket_ping_pong_heartbeat(client: TestClient):
         pong = json.loads(ws.receive_text())
         assert pong["type"] == "PONG"
         assert "timestamp" in pong
+
+
+def test_websocket_snapshot_recovery_on_large_gap(client: TestClient):
+    """
+    When client requests RESYNC for a sequence number beyond the replay buffer,
+    the server sends a SNAPSHOT_RESYNC with current full seat state and authoritative seq.
+    """
+    with client.websocket_connect("/ws/events?event_id=1") as ws:
+        _ = ws.receive_text()  # initial snapshot
+
+        # Send RESYNC for ancient or non-existent sequence number
+        ws.send_text(json.dumps({"action": "RESYNC", "from_seq": 999999}))
+        resync_msg = json.loads(ws.receive_text())
+
+        assert resync_msg["type"] == "SNAPSHOT_RESYNC"
+        assert "seq" in resync_msg
+        assert "seats" in resync_msg
+        assert isinstance(resync_msg["seats"], list)
+        assert resync_msg["event_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_websocket_atomic_publish_sequence_log_consistency():
+    """
+    PUBLISH_WS_EVENT_LUA atomically increments sequence and pushes to event log.
+    Ensures every sequence number allocated has an exact matching replayable entry in the log.
+    """
+    from app.redis.client import get_redis
+
+    redis = await get_redis()
+    await redis.delete("event:1:ws_seq", "event:1:ws_event_log")
+
+    # Publish 5 events
+    for i in range(1, 6):
+        updates = [{"seat_id": 100 + i, "status": "HELD", "hold_id": f"hld_{i}"}]
+        payload = await ws_manager.publish_seat_status_change(1, updates)
+        assert payload["seq"] == i
+
+    # Inspect Redis sequence and event log directly
+    final_seq = int(await redis.get("event:1:ws_seq"))
+    assert final_seq == 5
+
+    log_items = await redis.lrange("event:1:ws_event_log", 0, -1)
+    assert len(log_items) == 5
+
+    # Each log item must strictly match sequence 1..5 in order with zero gaps
+    for idx, raw in enumerate(log_items, start=1):
+        item = json.loads(raw)
+        assert item["seq"] == idx
+        assert item["event_id"] == 1
+        assert item["type"] == "SEAT_STATUS_CHANGE"
+
+
