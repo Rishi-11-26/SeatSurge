@@ -37,6 +37,14 @@ async def test_seeding_5040_seats(db_session_factory):
         std_count = std_res.scalar()
         assert std_count == 3600, f"Expected 3,600 STANDARD seats, got {std_count}"
 
+        # 5. Verify authoritative tier pricing
+        vip_p = (await session.execute(select(Seat.price_cents).where(Seat.tier == SeatTier.VIP.value).limit(1))).scalar()
+        prem_p = (await session.execute(select(Seat.price_cents).where(Seat.tier == SeatTier.PREMIUM.value).limit(1))).scalar()
+        std_p = (await session.execute(select(Seat.price_cents).where(Seat.tier == SeatTier.STANDARD.value).limit(1))).scalar()
+        assert vip_p == 15000, f"Expected VIP price 15000, got {vip_p}"
+        assert prem_p == 7500, f"Expected PREMIUM price 7500, got {prem_p}"
+        assert std_p == 3500, f"Expected STANDARD price 3500, got {std_p}"
+
 
 @pytest.mark.asyncio
 async def test_booking_unique_constraint(db_session_factory):

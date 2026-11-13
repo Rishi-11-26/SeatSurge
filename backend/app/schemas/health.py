@@ -17,7 +17,15 @@ class HealthResponse(BaseModel):
 
 
 class ReadinessResponse(BaseModel):
-    ready: bool
+    ready: bool = Field(..., description="True only when DB, Redis, AND recovery are all healthy")
     instance_id: str
     database: bool
     redis: bool
+    recovery_complete: bool = Field(
+        ...,
+        description=(
+            "True when Redis state reconstruction from PostgreSQL has completed "
+            "successfully for this process lifetime. False means this instance is "
+            "not yet safe to serve booking traffic."
+        ),
+    )

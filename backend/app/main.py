@@ -1,4 +1,5 @@
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,8 @@ from app.redis.client import init_redis_pool, close_redis
 from app.db.session import engine
 from app.db.init_db import init_db
 from app.services.metrics_service import metrics_tracker
+from app.services.reaper_service import hold_expiry_reaper
+from app.services.recovery_service import RedisRecoveryService, mark_recovery_complete, mark_recovery_skipped
 from app.api.v1.router import api_v1_router
 from app.api.v1.endpoints.health import get_health
 from app.core.exceptions import register_exception_handlers
@@ -24,17 +27,43 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Could not eagerly initialize Redis pool: {exc}")
 
-    # Database initialization & seeding
-    try:
-        await init_db(engine)
-        logger.info("Database initialization and seed verification complete.")
-    except Exception as exc:
-        logger.warning(f"Database initialization deferred (database may still be starting): {exc}")
+    # Database initialization, recovery & background services (production/staging)
+    if settings.APP_ENV != "test":
+        try:
+            await asyncio.wait_for(init_db(engine), timeout=2.0)
+            logger.info("Database initialization and seed verification complete.")
+        except Exception as exc:
+            logger.warning(f"Database initialization deferred (database may still be starting): {exc}")
+
+        try:
+            recovery_result = await asyncio.wait_for(
+                RedisRecoveryService.reconstruct_state_from_postgres(engine), timeout=2.0
+            )
+            status_val = recovery_result.get("status") if recovery_result else "UNKNOWN"
+            if status_val == "SUCCESS":
+                logger.info(f"Redis recovery: SUCCESS — {recovery_result}")
+            elif status_val == "COMPLETED_BY_PEER":
+                logger.info("Redis recovery: completed by peer instance.")
+            else:
+                # SKIPPED, TIMED_OUT_WAITING_FOR_PEER, or UNKNOWN
+                # mark_recovery_skipped() already called inside the service
+                logger.error(
+                    f"Redis recovery: {status_val} — this instance will NOT serve "
+                    f"booking traffic until recovery succeeds. Reason: {recovery_result}"
+                )
+        except Exception as exc:
+            mark_recovery_skipped()
+            logger.error(f"Redis recovery exception — instance marked NOT READY: {exc}")
+
+        # Start background services
+        hold_expiry_reaper.start()
 
     yield
 
     # Shutdown
     logger.info(f"Shutting down {settings.PROJECT_NAME} [{settings.INSTANCE_ID}]...")
+    if settings.APP_ENV != "test":
+        await hold_expiry_reaper.stop()
     await close_redis()
     await engine.dispose()
     logger.info("Database and Redis connections gracefully cleaned up.")

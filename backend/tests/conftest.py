@@ -10,10 +10,22 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
+from app.core.config import settings
+settings.APP_ENV = "test"
+
 from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
 from app.db.init_db import init_db
+from app.redis.client import set_redis_override
+from app.services.recovery_service import mark_recovery_complete, reset_recovery_state
+
+try:
+    import fakeredis.aioredis as fake_aioredis
+    import fakeredis as _fakeredis_sync
+except ImportError:
+    fake_aioredis = None
+    _fakeredis_sync = None
 
 TEST_DB_FILE = Path(__file__).resolve().parent / "test_seatsurge.db"
 TEST_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_FILE}"
@@ -68,3 +80,43 @@ def client():
 @pytest.fixture
 def db_session_factory():
     return TestingSessionLocal
+
+
+@pytest.fixture(autouse=True)
+def setup_fake_redis():
+    """
+    Injects in-memory FakeRedis into app.redis for fast, reliable Lua execution in tests.
+
+    Uses a shared FakeServer so that the async client (injected into the app) and the
+    synchronous client (accessible via ``sync_fake_redis`` fixture) share the same keyspace.
+    Existing tests that do ``await setup_fake_redis.get(...)`` continue to work because this
+    fixture yields the **async** FakeRedis client.
+
+    Also marks recovery complete so the fail-closed readiness gate does not block holds
+    during the test suite.
+    """
+    if fake_aioredis is not None and _fakeredis_sync is not None:
+        server = _fakeredis_sync.FakeServer()
+        async_client = fake_aioredis.FakeRedis(server=server, decode_responses=True)
+        sync_client = _fakeredis_sync.FakeRedis(server=server, decode_responses=True)
+        # Stash sync handle so sync_fake_redis fixture can retrieve it
+        async_client._sync_handle = sync_client
+        set_redis_override(async_client)
+        mark_recovery_complete()   # test mode: bypass real recovery
+        yield async_client         # backward-compatible: existing tests await this
+        set_redis_override(None)
+        reset_recovery_state()     # restore flags between tests
+    else:
+        yield None
+
+
+@pytest.fixture
+def sync_fake_redis(setup_fake_redis):
+    """
+    Returns the synchronous FakeRedis handle that shares the same FakeServer as
+    setup_fake_redis.  Use in tests that need synchronous Redis state manipulation
+    (e.g. injecting a gate key) without asyncio.run().
+    """
+    if setup_fake_redis is not None and hasattr(setup_fake_redis, "_sync_handle"):
+        return setup_fake_redis._sync_handle
+    return None

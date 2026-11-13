@@ -10,6 +10,10 @@ redis_client: Optional[aioredis.Redis] = None
 
 def init_redis_pool() -> aioredis.ConnectionPool:
     global redis_pool, redis_client
+    # If a fake Redis client was injected for tests, preserve it
+    if redis_client is not None and "Fake" in type(redis_client).__name__:
+        return redis_pool
+
     if redis_pool is None:
         redis_pool = aioredis.ConnectionPool.from_url(
             settings.redis_url,
@@ -29,6 +33,14 @@ async def get_redis() -> aioredis.Redis:
     return redis_client
 
 
+def set_redis_override(client: Optional[aioredis.Redis]) -> None:
+    """Allows test fixtures to inject an in-memory FakeRedis instance."""
+    global redis_client, redis_pool
+    redis_client = client
+    if client is None:
+        redis_pool = None
+
+
 async def check_redis_health() -> bool:
     try:
         client = await get_redis()
@@ -41,6 +53,8 @@ async def check_redis_health() -> bool:
 
 async def close_redis() -> None:
     global redis_pool, redis_client
+    if redis_client is not None and "Fake" in type(redis_client).__name__:
+        return
     if redis_client:
         await redis_client.aclose()
         redis_client = None

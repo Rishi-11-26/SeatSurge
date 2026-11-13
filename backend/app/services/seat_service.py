@@ -91,6 +91,7 @@ class SeatService:
 
             seat_data.append({
                 "seat_id": s.id,          # Field name matches API contract §4
+                "id": s.id,               # Retained as alias for frontend component compatibility
                 "event_id": s.event_id,
                 "row": s.row,
                 "number": s.number,
@@ -132,6 +133,7 @@ class SeatService:
 
         return {
             "seat_id": seat.id,           # Field name matches API contract §4
+            "id": seat.id,                # Retained as alias for frontend component compatibility
             "event_id": seat.event_id,
             "row": seat.row,
             "number": seat.number,

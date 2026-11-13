@@ -104,3 +104,7 @@ def test_get_seat_availability_summary(client):
     assert data["tiers"]["VIP"]["total"] == 240
     assert data["tiers"]["PREMIUM"]["total"] == 1200
     assert data["tiers"]["STANDARD"]["total"] == 3600
+    # Authoritative tier prices
+    assert data["tiers"]["VIP"]["price_cents"] == 15000
+    assert data["tiers"]["PREMIUM"]["price_cents"] == 7500
+    assert data["tiers"]["STANDARD"]["price_cents"] == 3500
