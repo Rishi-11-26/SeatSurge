@@ -36,7 +36,8 @@ class Settings(BaseSettings):
         "192.168.0.0/16",
     ]
 
-    # PostgreSQL Database (default localhost for local dev/test; overridden by docker-compose)
+    # PostgreSQL Database
+    DATABASE_URL: Union[str, None] = None
     POSTGRES_USER: str = "seatsurge"
     POSTGRES_PASSWORD: str = "seatsurge_secret"
     POSTGRES_HOST: str = "localhost"
@@ -45,19 +46,31 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str:
+        if self.DATABASE_URL:
+            url = self.DATABASE_URL
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return url
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
-    # Redis Cache & Coordination (default localhost for local dev/test; overridden by docker-compose)
+    # Redis Cache & Coordination
+    REDIS_URL: Union[str, None] = None
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: Union[str, None] = None
+    REDIS_SSL: bool = False
 
     @property
     def redis_url(self) -> str:
+        if self.REDIS_URL:
+            return self.REDIS_URL
+        proto = "rediss" if self.REDIS_SSL else "redis"
         if self.REDIS_PASSWORD:
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+            return f"{proto}://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"{proto}://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # Ticketing Business Rules
     TOTAL_SEATS: int = 5040

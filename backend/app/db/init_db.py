@@ -132,6 +132,7 @@ async def init_db(engine: AsyncEngine) -> None:
                 # Try to acquire PostgreSQL advisory lock to ensure only one instance seeds
                 res = await conn.execute(text(f"SELECT pg_try_advisory_lock({ADVISORY_LOCK_ID})"))
                 acquired_lock = res.scalar() is True
+                await conn.commit()
             except Exception as e:
                 logger.warning(f"Could not check advisory lock: {e}")
                 acquired_lock = True
@@ -143,17 +144,20 @@ async def init_db(engine: AsyncEngine) -> None:
             for _ in range(30):
                 await asyncio.sleep(0.5)
                 try:
-                    async with conn.begin():
-                        check = await conn.execute(text("SELECT count(*) FROM seats WHERE event_id = 1"))
-                        if check.scalar() >= EXPECTED_TOTAL_SEATS:
-                            logger.info("Database initialized by peer instance.")
-                            return
+                    check = await conn.execute(text("SELECT count(*) FROM seats WHERE event_id = 1"))
+                    count_val = check.scalar()
+                    await conn.commit()
+                    if count_val >= EXPECTED_TOTAL_SEATS:
+                        logger.info("Database initialized by peer instance.")
+                        return
                 except Exception:
                     pass
             logger.warning("Peer initialization timed out. Proceeding with safety checks...")
 
         try:
             logger.info("Initializing database tables and seed data...")
+            if conn.in_transaction():
+                await conn.commit()
             async with conn.begin():
                 await conn.run_sync(Base.metadata.create_all)
 

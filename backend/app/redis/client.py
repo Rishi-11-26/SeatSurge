@@ -19,8 +19,8 @@ def init_redis_pool() -> aioredis.ConnectionPool:
             settings.redis_url,
             max_connections=50,
             decode_responses=True,
-            socket_connect_timeout=2.0,
-            socket_timeout=2.0,
+            socket_connect_timeout=10.0,
+            socket_timeout=5.0,
         )
         redis_client = aioredis.Redis(connection_pool=redis_pool)
     return redis_pool
@@ -44,7 +44,7 @@ def set_redis_override(client: Optional[aioredis.Redis]) -> None:
 async def check_redis_health() -> bool:
     try:
         client = await get_redis()
-        response = await asyncio.wait_for(client.ping(), timeout=1.5)
+        response = await asyncio.wait_for(client.ping(), timeout=5.0)
         return response is True or response == "PONG"
     except Exception as exc:
         logger.warning(f"Redis health check failed: {exc}")

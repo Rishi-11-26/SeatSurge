@@ -32,14 +32,14 @@ async def lifespan(app: FastAPI):
     # Database initialization, recovery & background services (production/staging)
     if settings.APP_ENV != "test":
         try:
-            await asyncio.wait_for(init_db(engine), timeout=2.0)
+            await asyncio.wait_for(init_db(engine), timeout=30.0)
             logger.info("Database initialization and seed verification complete.")
         except Exception as exc:
             logger.warning(f"Database initialization deferred (database may still be starting): {exc}")
 
         try:
             recovery_result = await asyncio.wait_for(
-                RedisRecoveryService.reconstruct_state_from_postgres(engine), timeout=2.0
+                RedisRecoveryService.reconstruct_state_from_postgres(engine), timeout=30.0
             )
             status_val = recovery_result.get("status") if recovery_result else "UNKNOWN"
             if status_val == "SUCCESS":
