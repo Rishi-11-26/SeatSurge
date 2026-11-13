@@ -4,9 +4,11 @@
  * Protocol: REST (JSON) + WebSockets (RFC 6455)
  */
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
-export const GATEWAY_ROOT = import.meta.env.VITE_GATEWAY_ROOT || 'http://localhost:8000';
-export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000/ws/events';
+const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
+export const API_BASE_URL = env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+export const GATEWAY_ROOT = env.VITE_GATEWAY_ROOT || 'http://localhost:8000';
+const defaultWsProto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+export const WS_BASE_URL = env.VITE_WS_BASE_URL || `${defaultWsProto}//localhost:8000/ws/events`;
 
 /**
  * Stable Session ID stored in localStorage across tabs/refreshes
@@ -58,17 +60,39 @@ async function request(endpoint, options = {}) {
     const data = isJson ? await response.json() : null;
 
     if (!response.ok) {
-      // Backend RFC 7807 inspired error schema
-      const errorPayload = data?.error || {
-        code: `HTTP_${response.status}`,
-        message: response.statusText || 'Unknown API Error',
-        details: data?.detail || {},
-      };
-      const error = new Error(errorPayload.message || 'API request failed');
-      error.code = errorPayload.code;
-      error.details = errorPayload.details || {};
+      // Extract backend error details supporting both FastAPI details and RFC 7807 schemas
+      let code = `HTTP_${response.status}`;
+      let message = response.statusText || 'API Request Failed';
+      let details = {};
+
+      if (data) {
+        if (typeof data.detail === 'object' && data.detail !== null) {
+          code = data.detail.code || code;
+          message = data.detail.message || message;
+          details = data.detail;
+        } else if (typeof data.detail === 'string') {
+          message = data.detail;
+        } else if (data.error) {
+          code = data.error.code || code;
+          message = data.error.message || message;
+          details = data.error.details || data.error;
+        } else if (data.code || data.message) {
+          code = data.code || code;
+          message = data.message || message;
+        }
+      }
+
+      // Capture rate limit Retry-After header if present
+      const retryAfter = response.headers.get('retry-after');
+      if (retryAfter) {
+        details.retryAfter = parseInt(retryAfter, 10) || 60;
+      }
+
+      const error = new Error(message || 'API request failed');
+      error.code = code;
+      error.details = details;
       error.status = response.status;
-      error.timestamp = errorPayload.timestamp;
+      error.timestamp = data?.timestamp || new Date().toISOString();
       throw error;
     }
 
@@ -183,6 +207,26 @@ export async function enterQueue(eventId = 1) {
 }
 
 /**
+ * GET /api/v1/queue/status
+ * Queries current FIFO queue position or admission status per Phase 5.
+ * Strictly uses GET /api/v1/queue/status without silent fallback.
+ */
+export async function getQueueStatus(eventId = 1) {
+  return request(`/queue/status?event_id=${eventId}`, { method: 'GET' });
+}
+
+/**
+ * POST /api/v1/queue/leave
+ * Notifies queue manager that user voluntarily vacated their queue slot.
+ */
+export async function leaveQueue(eventId = 1) {
+  return request('/queue/leave', {
+    method: 'POST',
+    body: JSON.stringify({ event_id: eventId }),
+  });
+}
+
+/**
  * 4. Atomic Seat Holds (Phase 2)
  * POST /api/v1/events/{event_id}/holds
  * Max 6 seats. Adjacent required. Idempotent.
@@ -208,6 +252,28 @@ export async function createSeatHold({
 }
 
 /**
+ * DELETE /api/v1/events/{event_id}/holds/{hold_id}
+ * Explicitly releases held seats back to the AVAILABLE pool.
+ */
+export async function releaseSeatHold({ eventId = 1, holdId }) {
+  if (!holdId) return null;
+  return request(`/events/${eventId}/holds/${holdId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * GET /api/v1/events/{event_id}/holds/{hold_id}
+ * Inspects active hold metadata, time remaining, and status.
+ */
+export async function getSeatHold({ eventId = 1, holdId }) {
+  if (!holdId) return null;
+  return request(`/events/${eventId}/holds/${holdId}`, {
+    method: 'GET',
+  });
+}
+
+/**
  * 5. Checkout & Payment Simulation (Phase 6)
  * POST /api/v1/checkout/pay
  */
@@ -215,6 +281,7 @@ export async function checkoutPay({
   holdId,
   paymentMethod = 'simulated_card',
   simulateFailure = false,
+  simulatePending = false,
   idempotencyKey = generateIdempotencyKey(),
 }) {
   return request('/checkout/pay', {
@@ -226,8 +293,17 @@ export async function checkoutPay({
       hold_id: holdId,
       payment_method: paymentMethod,
       simulate_failure: simulateFailure,
+      simulate_pending: simulatePending,
     }),
   });
+}
+
+/**
+ * GET /api/v1/checkout/payments/{payment_id}
+ * Authoritative query for payment transaction status and confirmed booking ID.
+ */
+export async function getPaymentStatus(paymentId) {
+  return request(`/checkout/payments/${paymentId}`, { method: 'GET' });
 }
 
 /**

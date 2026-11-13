@@ -8,7 +8,7 @@
  * - STANDARD: Rows Q–Z & AA–AH (18 rows × 200 = 3,600 seats, IDs 1,441–5,040, 3,500 cents)
  */
 
-import { fetchFullSeatMap, getSeatMapSnapshot } from './api';
+import { fetchFullSeatMap, getSeatMapSnapshot } from './api.js';
 
 export const SEAT_SECTIONS = [
   {

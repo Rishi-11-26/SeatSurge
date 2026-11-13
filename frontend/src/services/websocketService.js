@@ -14,7 +14,7 @@
  * - Live WebSocket server endpoint on backend (Phase 3) is pending merge on backend main branch.
  */
 
-import { WS_BASE_URL } from './api';
+import { WS_BASE_URL } from './api.js';
 
 export const WS_STATUS = Object.freeze({
   DISCONNECTED: 'DISCONNECTED',

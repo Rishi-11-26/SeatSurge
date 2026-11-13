@@ -20,7 +20,7 @@
  *    - Secondary catalog events (ICC T20, A.R. Rahman) used for discovery prototyping.
  */
 
-import { getEvent, getEvents } from './api';
+import { getEvent, getEvents } from './api.js';
 
 export const PRIMARY_EVENT = {
   id: 1, // Authoritative Event ID

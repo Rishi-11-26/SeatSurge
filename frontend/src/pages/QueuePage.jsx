@@ -22,6 +22,7 @@ import {
   pollQueueMock,
   joinQueueReal,
   pollQueueReal,
+  leaveQueueReal,
 } from '../services/queueService';
 import { PRIMARY_EVENT } from '../services/eventService';
 
@@ -36,7 +37,7 @@ const EVENT_ID     = PRIMARY_EVENT?.id || 1;
 export default function QueuePage({ onNavigate }) {
   const [status,         setStatus]         = useState(QUEUE_STATUS.NOT_JOINED);
   const [session,        setSession]         = useState(null);
-  const [isMock,         setIsMock]          = useState(true);
+  const [isMock,         setIsMock]          = useState(false);
   const [isJoining,      setIsJoining]       = useState(false);
   const [error,          setError]           = useState(null);
   const [reconnectCount, setReconnectCount]  = useState(0);
@@ -136,14 +137,21 @@ export default function QueuePage({ onNavigate }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleLeave = useCallback(() => {
+  const handleLeave = useCallback(async () => {
     stopPolling();
+    if (!isMock) {
+      try {
+        await leaveQueueReal(EVENT_ID);
+      } catch (e) {
+        console.warn('Queue leave notice:', e);
+      }
+    }
     clearQueueSession();
     sessionRef.current = null;
     setSession(null);
     setStatus(QUEUE_STATUS.CANCELLED);
     setError(null);
-  }, []);
+  }, [isMock]);
 
   const handleReconnect = useCallback(async () => {
     stopPolling();
@@ -330,25 +338,25 @@ function NotJoinedView({ onJoinMock, onJoinReal, isJoining, error }) {
 
         <div className="flex flex-col sm:flex-row gap-3 pt-1">
           <button
-            onClick={onJoinMock}
+            onClick={onJoinReal}
             disabled={isJoining}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#E8472B] hover:bg-[#C23A20]
                        disabled:opacity-60 disabled:cursor-not-allowed text-white rounded text-sm
                        font-semibold transition-colors"
           >
             {isJoining
-              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Joining Queue…</>
-              : <><Users className="w-4 h-4" /> Join Waiting Room</>
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Entering Queue…</>
+              : <><Users className="w-4 h-4" /> Join Live Waiting Room</>
             }
           </button>
           <button
-            onClick={onJoinReal}
+            onClick={onJoinMock}
             disabled={isJoining}
-            title="Requires backend NGINX + instances running"
-            className="flex items-center justify-center gap-2 px-4 py-3 bg-[#15130F] hover:bg-[#2A2620]
-                       disabled:opacity-60 text-[#F4EFE6] rounded text-xs font-mono transition-colors"
+            title="Local simulation for testing UI states without backend"
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-[#EAE3D6] hover:bg-[#D8CEBF]
+                       border border-[#D8CEBF] disabled:opacity-60 text-[#4A453D] rounded text-xs font-mono transition-colors"
           >
-            <Wifi className="w-3.5 h-3.5" /> Try Live Backend
+            <span className="text-[10px] font-mono text-[#C8962A] bg-[#F9F3E5] px-1 py-0.5 rounded border border-[#C8962A]/30">SIM</span> Test Simulation
           </button>
         </div>
       </div>
@@ -371,9 +379,12 @@ function WaitingView({ session, progressPercent, fmtWait, isMock, onLeave }) {
       {/* Position + wait card */}
       <div className="bg-[#EAE3D6] border border-[#D8CEBF] rounded-lg p-6 space-y-4">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div role="status" aria-live="polite">
             <div className="text-[10px] font-mono text-[#706A61] uppercase tracking-widest">Your Position</div>
-            <div className="font-editorial text-5xl font-bold text-[#E8472B] leading-none mt-1">
+            <div
+              className="font-editorial text-5xl font-bold text-[#E8472B] leading-none mt-1"
+              aria-label={`Queue position number ${session.queue_position}`}
+            >
               #{session.queue_position}
             </div>
           </div>

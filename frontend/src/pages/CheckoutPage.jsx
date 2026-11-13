@@ -22,12 +22,14 @@ import React, {
 import {
   ShieldCheck, Clock, AlertCircle, CheckCircle, XCircle,
   RefreshCw, CreditCard, ArrowLeft, Ticket, Info,
-  AlertTriangle, Lock, QrCode,
+  AlertTriangle, Lock, QrCode, Printer,
 } from 'lucide-react';
 import {
   PAYMENT_STATUS,
   getActiveHold,
   clearActiveHold,
+  releaseActiveHold,
+  syncActiveHoldWithBackend,
   getOrCreateIdempotencyKey,
   clearIdempotencyKey,
   processPaymentMock,
@@ -61,7 +63,7 @@ export default function CheckoutPage({ onNavigate }) {
   const [paymentStatus,   setPaymentStatus]   = useState(PAYMENT_STATUS.IDLE);
   const [paymentResult,   setPaymentResult]   = useState(null);
   const [isSubmitting,    setIsSubmitting]    = useState(false);
-  const [isMock,          setIsMock]          = useState(true);
+  const [isMock,          setIsMock]          = useState(false);
   const [simFailure,      setSimFailure]      = useState(false);
   const [simPending,      setSimPending]      = useState(false);
   const [holdSeconds,     setHoldSeconds]     = useState(null);
@@ -85,6 +87,18 @@ export default function CheckoutPage({ onNavigate }) {
 
     const holdId = loaded.hold_id || loaded._sim_id;
     idempKeyRef.current = getOrCreateIdempotencyKey(holdId);
+
+    // If real mode hold, synchronize authoritative expiry with backend
+    if (!loaded.is_mock && loaded.hold_id) {
+      syncActiveHoldWithBackend(1, loaded.hold_id).then(synced => {
+        if (synced) {
+          setHold(synced);
+          if (typeof synced.remainingSeconds === 'number') {
+            setHoldSeconds(synced.remainingSeconds);
+          }
+        }
+      }).catch(err => console.warn('Hold synchronization notice:', err));
+    }
 
     const timer = setInterval(() => {
       const refreshed = getActiveHold();
@@ -126,18 +140,28 @@ export default function CheckoutPage({ onNavigate }) {
         result = await processPaymentReal({
           holdId,
           simulateFailure: simFailure,
+          simulatePending: simPending,
           idempotencyKey:  idemKey,
         });
       }
 
       setPaymentResult(result);
 
-      // Only definitive backend SUCCEEDED with booking_id / payment_id confirms a booking
-      if (result && result.status === 'SUCCEEDED' && (result.booking_id || result.payment_id)) {
+      // Only definitive backend SUCCEEDED with an authoritative confirmed booking_id confirms a booking
+      // Never show confirmation based solely on payment success or payment_id without a booking reference
+      if (result && result.status === 'SUCCEEDED' && result.booking_id) {
         clearActiveHold();
         clearIdempotencyKey(holdId);
         setPaymentStatus(PAYMENT_STATUS.SUCCEEDED);
         setView('confirmation');
+      } else if (result && result.status === 'SUCCEEDED' && !result.booking_id) {
+        // Payment succeeded, but authoritative booking reference is missing/unconfirmed
+        setPaymentStatus(PAYMENT_STATUS.PENDING);
+        setPaymentResult({
+          ...result,
+          error: 'Payment was captured, but authoritative booking reference is pending confirmation from ticketing service. Your hold remains active. Do not retry payment.',
+        });
+        submittedRef.current = false;
       } else if (result?.status === 'DECLINED') {
         setPaymentStatus(PAYMENT_STATUS.DECLINED);
         submittedRef.current = false; // allow retry with same idempotency key
@@ -149,8 +173,16 @@ export default function CheckoutPage({ onNavigate }) {
         submittedRef.current = false;
       }
     } catch (err) {
+      const isHoldExpired = err.status === 410 || err.status === 404 || err.code === 'HOLD_EXPIRED' || err.code === 'NOT_FOUND';
+      if (isHoldExpired) {
+        clearActiveHold();
+        setHold(prev => prev ? { ...prev, isExpired: true } : null);
+        setHoldSeconds(0);
+      }
       setPaymentResult({
-        error: err?.message || 'Payment network request failed. Idempotency key preserved; retry is safe.',
+        error: isHoldExpired
+          ? 'Seat hold expired on the backend. Your reservation was released back to the stadium pool. Please return to the seat map to reselect.'
+          : (err?.message || 'Payment network request failed. Idempotency key preserved; retry is safe.'),
       });
       setPaymentStatus(PAYMENT_STATUS.ERROR);
       submittedRef.current = false;
@@ -161,10 +193,12 @@ export default function CheckoutPage({ onNavigate }) {
 
   const handleRetry = useCallback(() => {
     // Keep same idempotency key — do NOT regenerate
-    setPaymentStatus(PAYMENT_STATUS.IDLE);
-    setPaymentResult(null);
+    if (paymentStatus !== PAYMENT_STATUS.PENDING) {
+      setPaymentStatus(PAYMENT_STATUS.IDLE);
+      setPaymentResult(null);
+    }
     submittedRef.current = false;
-  }, []);
+  }, [paymentStatus]);
 
   // ── Derived totals (integer cents only) ─────────────────────────────────
   const { seats, totalCents } = useMemo(() => {
@@ -262,14 +296,48 @@ export default function CheckoutPage({ onNavigate }) {
   // ── Render: Main Checkout ────────────────────────────────────────────────
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-5">
+      {/* Back button and Hold release action */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <button
           onClick={() => onNavigate('seats')}
           className="text-xs font-mono text-[#706A61] hover:text-[#15130F] flex items-center
-                     gap-1.5 transition-colors mb-4"
+                     gap-1.5 transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Seat Map
         </button>
+        <button
+          onClick={async () => {
+            if (window.confirm('Release these held seats and return to seat map?')) {
+              await releaseActiveHold(1, holdId);
+              onNavigate('seats');
+            }
+          }}
+          className="text-[11px] font-mono text-[#E8472B] hover:text-[#C23A20] hover:underline transition-colors"
+        >
+          Cancel & Release Hold
+        </button>
+      </div>
+
+      {/* Urgent Expiring Alert Banner */}
+      {!hold?.isExpired && holdSeconds !== null && holdSeconds <= 30 && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-5 p-4 bg-[#FCEBE8] border-2 border-[#E8472B] rounded-lg flex items-center justify-between gap-3 animate-pulse"
+        >
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-[#E8472B] flex-shrink-0" />
+            <div className="text-xs font-mono text-[#15130F]">
+              <strong className="text-[#E8472B] uppercase">Seat hold expiring in {holdSeconds}s!</strong> Complete payment now before seats return to the stadium pool.
+            </div>
+          </div>
+          <div className="font-editorial text-xl font-bold text-[#E8472B] tabular-nums">
+            {formatCountdown(holdSeconds)}
+          </div>
+        </div>
+      )}
+
+      <div className="mb-5">
         <div className="text-xs font-mono text-[#E8472B] uppercase tracking-widest font-semibold">
           Secure Checkout
         </div>
@@ -623,17 +691,17 @@ function PaymentPanel({
           />
         )}
 
-        {/* Pending */}
+        {/* Pending / Reconciliation View */}
         {paymentStatus === PAYMENT_STATUS.PENDING && (
           <PaymentOutcome
-            icon={<Clock className="w-6 h-6 text-[#C8962A]" />}
-            bg="bg-[#F9F3E5] border-[#C8962A]/40"
-            label="Payment Pending"
+            icon={<Clock className="w-6 h-6 text-[#C8962A] animate-pulse" />}
+            bg="bg-[#F9F3E5] border-2 border-[#C8962A]/60"
+            label="Payment Captured · Booking Reconciliation Pending"
             labelColor="text-[#C8962A]"
-            message={paymentResult?.message || 'Payment is still processing. Please wait.'}
+            message={paymentResult?.error || paymentResult?.message || 'Payment has been authorized. Reconciling authoritative ticket booking reference with ticketing service. Do not initiate a new payment.'}
             isMock={paymentResult?.is_mock}
-            onRetry={onRetry}
-            retryLabel="Check Status"
+            onRetry={onPay}
+            retryLabel={isSubmitting ? "Reconciling..." : "Check Booking Status"}
           />
         )}
 
@@ -817,6 +885,13 @@ function ConfirmationView({ paymentResult, seats, totalCents, onNavigate }) {
 
       {/* Actions */}
       <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <button
+          onClick={() => window.print()}
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-[#EAE3D6] border border-[#D8CEBF]
+                     hover:bg-[#D8CEBF] text-[#15130F] rounded text-sm font-semibold transition-colors"
+        >
+          <Printer className="w-4 h-4 text-[#15130F]" /> Print Confirmation
+        </button>
         <button
           onClick={() => onNavigate('landing')}
           className="flex items-center justify-center gap-2 px-6 py-3 bg-[#15130F]

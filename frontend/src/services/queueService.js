@@ -16,7 +16,7 @@
  * Admission tokens are stored in sessionStorage only — never rendered in UI.
  */
 
-import { enterQueue } from './api';
+import { enterQueue, getQueueStatus, leaveQueue } from './api.js';
 
 // ─── State Constants ──────────────────────────────────────────────────────────
 export const QUEUE_STATUS = Object.freeze({
@@ -169,20 +169,34 @@ export async function joinQueueReal(eventId = 1) {
 }
 
 /**
- * Poll queue status — re-calls POST /api/v1/queue/enter.
- * Per api-contract.md §5: same endpoint is used to check current status.
+ * Poll queue status via GET /api/v1/queue/status or POST /api/v1/queue/enter.
+ * Per api-contract.md §5.
  */
 export async function pollQueueReal(eventId = 1) {
   try {
-    const response = await enterQueue(eventId);
+    const response = await getQueueStatus(eventId);
     return _processRealResponse(response, eventId, null);
   } catch (err) {
     if (err.status === 404) {
-      const pendingErr = new Error('Virtual Waiting Room endpoint (POST /api/v1/queue/enter) returned HTTP 404: Waiting room queue is pending backend Phase 5 implementation.');
+      const pendingErr = new Error('Virtual Waiting Room endpoint returned HTTP 404: Waiting room queue is pending backend Phase 5 implementation.');
       pendingErr.code = 'BACKEND_DEPENDENCY_PENDING';
       pendingErr.status = 404;
       throw pendingErr;
     }
+    throw err;
+  }
+}
+
+/**
+ * Leave queue via POST /api/v1/queue/leave
+ */
+export async function leaveQueueReal(eventId = 1) {
+  try {
+    const result = await leaveQueue(eventId);
+    clearQueueSession();
+    return result;
+  } catch (err) {
+    clearQueueSession();
     throw err;
   }
 }

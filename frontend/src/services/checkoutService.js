@@ -9,7 +9,7 @@
  *  - Real payment adapter POST /api/v1/checkout/pay per api-contract.md §7
  */
 
-import { checkoutPay } from './api';
+import { checkoutPay, releaseSeatHold, getSeatHold } from './api.js';
 
 // ─── Payment Status Constants ─────────────────────────────────────────────────
 export const PAYMENT_STATUS = Object.freeze({
@@ -71,6 +71,51 @@ export function getActiveHold() {
 
 export function clearActiveHold() {
   localStorage.removeItem(HOLD_KEY);
+}
+
+/**
+ * Explicitly releases hold with backend and clears local storage.
+ * Calls DELETE /api/v1/events/{eventId}/holds/{holdId} per Phase 2.
+ */
+export async function releaseActiveHold(eventId = 1, holdId) {
+  if (holdId) {
+    try {
+      await releaseSeatHold({ eventId, holdId });
+    } catch (err) {
+      console.warn('Failed to release hold on backend:', err);
+    }
+  }
+  clearActiveHold();
+  if (holdId) clearIdempotencyKey(holdId);
+}
+
+/**
+ * Synchronize local hold with authoritative backend state
+ * Calls GET /api/v1/events/{eventId}/holds/{holdId} per Phase 2.
+ */
+export async function syncActiveHoldWithBackend(eventId = 1, holdId) {
+  if (!holdId) return null;
+  try {
+    const backendHold = await getSeatHold({ eventId, holdId });
+    if (backendHold) {
+      const current = getActiveHold() || {};
+      const updated = {
+        ...current,
+        ...backendHold,
+        expires_at: backendHold.expires_at || current.expires_at,
+        time_remaining_seconds: backendHold.time_remaining_seconds ?? current.time_remaining_seconds,
+      };
+      localStorage.setItem(HOLD_KEY, JSON.stringify(updated));
+      return updated;
+    }
+  } catch (err) {
+    if (err.status === 404 || err.code === 'NOT_FOUND') {
+      // Hold has already expired or been reaped
+      clearActiveHold();
+      return { isExpired: true, remainingSeconds: 0 };
+    }
+  }
+  return getActiveHold();
 }
 
 // ─── Idempotency Key Lifecycle ────────────────────────────────────────────────
@@ -161,6 +206,7 @@ export async function processPaymentMock({
 export async function processPaymentReal({
   holdId,
   simulateFailure = false,
+  simulatePending = false,
   idempotencyKey,
 }) {
   try {
@@ -168,6 +214,7 @@ export async function processPaymentReal({
       holdId,
       paymentMethod: 'simulated_card',
       simulateFailure,
+      simulatePending,
       idempotencyKey,
     });
     return {

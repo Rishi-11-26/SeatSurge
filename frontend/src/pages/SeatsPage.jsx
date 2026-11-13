@@ -6,8 +6,9 @@ import GroupSelectModal from '../components/seats/GroupSelectModal';
 import { loadSeatMap, validateGroupAdjacency } from '../services/seatService';
 import { createSeatHold } from '../services/api';
 import { getAdmissionToken } from '../services/queueService';
+import { getActiveHold, releaseActiveHold } from '../services/checkoutService';
 import { websocketService, WS_STATUS } from '../services/websocketService';
-import { AlertCircle, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
+import { AlertCircle, CheckCircle, RefreshCw, AlertTriangle, ShieldCheck, Wifi, WifiOff, Clock } from 'lucide-react';
 
 export default function SeatsPage({ onNavigate }) {
   const [seats, setSeats] = useState([]);
@@ -27,6 +28,15 @@ export default function SeatsPage({ onNavigate }) {
   const [isHolding, setIsHolding] = useState(false);
   const [useSimulationFallback, setUseSimulationFallback] = useState(false);
   const [simulateRaceCondition, setSimulateRaceCondition] = useState(false);
+  const [activeHoldState, setActiveHoldState] = useState(null);
+
+  // Check for existing active hold on mount
+  useEffect(() => {
+    const current = getActiveHold();
+    if (current && !current.isExpired) {
+      setActiveHoldState(current);
+    }
+  }, []);
 
   // Fast seat map lookup map by ID
   const seatLookup = useMemo(() => {
@@ -120,15 +130,32 @@ export default function SeatsPage({ onNavigate }) {
       });
     });
 
-    // Handle full snapshot message received over WebSocket
+    // Handle full snapshot message received over WebSocket (initial SNAPSHOT or SNAPSHOT_RESYNC)
     const unsubSnapshot = websocketService.onSnapshot((data) => {
       if (data && Array.isArray(data.seats)) {
-        const normalized = data.seats.map(s => ({
-          ...s,
-          id: s.seat_id ?? s.id,
-          seat_id: s.seat_id ?? s.id,
-        }));
-        setSeats(normalized);
+        // Backend WebSocket snapshot provides [{ seat_id, status }, ...]
+        // Merge status updates into existing seat definitions to preserve row, number, tier, and price_cents
+        setSeats(prev => {
+          if (!prev || prev.length === 0) {
+            fetchSeats();
+            return prev;
+          }
+          const statusMap = new Map();
+          for (const s of data.seats) {
+            statusMap.set(s.seat_id ?? s.id, s.status);
+          }
+          let hasChanges = false;
+          const next = prev.map(seat => {
+            const nextStatus = statusMap.get(seat.id);
+            if (nextStatus && nextStatus !== seat.status) {
+              hasChanges = true;
+              return { ...seat, status: nextStatus };
+            }
+            return seat;
+          });
+          return hasChanges ? next : prev;
+        });
+
         setNotification({
           type: 'success',
           message: `Seat map resynchronized via real-time WebSocket snapshot (seq ${data.seq || 0}).`,
@@ -136,13 +163,13 @@ export default function SeatsPage({ onNavigate }) {
       }
     });
 
-    // Handle sequence gap: trigger full snapshot fetch
+    // Handle sequence gap: send RESYNC action per docs/api-contract.md §8
     const unsubGap = websocketService.onGap((lastSeq, newSeq) => {
       setNotification({
         type: 'warning',
-        message: `WebSocket gap detected (${lastSeq} → ${newSeq}). Refreshing seat map snapshot...`,
+        message: `WebSocket gap detected (${lastSeq} → ${newSeq}). Requesting RESYNC...`,
       });
-      fetchSeats();
+      websocketService.sendResync(lastSeq);
     });
 
     return () => {
@@ -268,6 +295,58 @@ export default function SeatsPage({ onNavigate }) {
             return;
           }
 
+          // Admission Token missing or expired per Phase 5 contract
+          if (
+            apiErr.status === 401 ||
+            apiErr.code === 'ADMISSION_TOKEN_REQUIRED' ||
+            apiErr.code === 'INVALID_ADMISSION_TOKEN' ||
+            apiErr.code === 'TOKEN_EXPIRED'
+          ) {
+            setNotification({
+              type: 'error',
+              message: `Admission Token Required (${apiErr.status || 403}): ${apiErr.message || 'A valid admission token from the waiting room is required to hold seats. Please join the queue.'}`,
+            });
+            setIsHolding(false);
+            return;
+          }
+
+          if (apiErr.status === 403 || apiErr.code === 'FORBIDDEN' || apiErr.code === 'BOT_BLOCKED') {
+            setNotification({
+              type: 'error',
+              message: `Security Verification (403): ${apiErr.message || 'Request flagged by rate or bot detection. Please slow down and re-attempt.'}`,
+            });
+            setIsHolding(false);
+            return;
+          }
+
+          if (apiErr.status === 400) {
+            setNotification({
+              type: 'error',
+              message: `Hold Validation Error (400): ${apiErr.message || 'Seats must be strictly adjacent and max 6.'}`,
+            });
+            setIsHolding(false);
+            return;
+          }
+
+          if (apiErr.status === 429) {
+            const waitSec = apiErr.details?.retryAfter || 5;
+            setNotification({
+              type: 'warning',
+              message: `Rate Limit Exceeded (429): Please wait ${waitSec} seconds before retrying hold request.`,
+            });
+            setIsHolding(false);
+            return;
+          }
+
+          if (apiErr.status === 503) {
+            setNotification({
+              type: 'warning',
+              message: 'State Recovery Active (503): Backend Redis state reconstruction in progress. Please retry momentarily.',
+            });
+            setIsHolding(false);
+            return;
+          }
+
           // Backend hold endpoint not available or returned 404 (Phase 2 pending)
           throw apiErr;
         }
@@ -311,12 +390,49 @@ export default function SeatsPage({ onNavigate }) {
     }
   };
 
+  const handleReleaseExistingHold = async () => {
+    if (activeHoldState?.hold_id) {
+      await releaseActiveHold(1, activeHoldState.hold_id);
+    }
+    setActiveHoldState(null);
+    setNotification({
+      type: 'info',
+      message: 'Active seat hold was released. Seats are now available in the stadium pool.',
+    });
+  };
+
   const selectedSeats = useMemo(() => {
     return selectedSeatIds.map(id => seatLookup.get(id)).filter(Boolean);
   }, [selectedSeatIds, seatLookup]);
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-140px)] relative">
+      {/* Existing Active Hold Banner */}
+      {activeHoldState && !activeHoldState.isExpired && (
+        <div className="bg-[#F9F3E5] border-b border-[#C8962A]/40 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-[#15130F]">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-[#C8962A] animate-pulse" />
+            <span>
+              You have an active hold on <strong>{activeHoldState.seats?.length || 'selected'} seats</strong> (Hold ID: <span className="font-semibold">{activeHoldState.hold_id?.substring(0, 14)}…</span>).
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onNavigate('checkout')}
+              className="px-3 py-1 bg-[#E8472B] hover:bg-[#C23A20] text-white rounded font-semibold text-[11px] transition-colors"
+            >
+              Resume Checkout
+            </button>
+            <button
+              onClick={handleReleaseExistingHold}
+              className="px-3 py-1 bg-[#EAE3D6] hover:bg-[#D8CEBF] text-[#4A453D] rounded border border-[#D8CEBF] text-[11px] transition-colors"
+            >
+              Release Seats
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Seat Map Controls Header */}
       <SeatMapHeader
         activeSection={activeSection}

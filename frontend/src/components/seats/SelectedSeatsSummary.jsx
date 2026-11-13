@@ -31,14 +31,18 @@ export default function SelectedSeatsSummary({
   const adjacency = validateGroupAdjacency(selectedSeats);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#15130F] text-[#F4EFE6] border-t-2 border-[#E8472B] shadow-2xl py-4 px-4 sm:px-6 animate-slide-up">
-      <div className="max-w-7xl mx-auto space-y-3">
+    <div
+      role="region"
+      aria-label="Seat Selection Summary"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-[#15130F] text-[#F4EFE6] border-t-2 border-[#E8472B] shadow-2xl py-3.5 px-4 sm:px-6 animate-slide-up"
+    >
+      <div className="max-w-7xl mx-auto space-y-2.5">
         
         {/* Main Row: Selection Pills, Pricing, Actions */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           
           {/* Left: Selected Seat Badges */}
-          <div className="space-y-1.5 flex-grow">
+          <div className="space-y-1.5 flex-grow" role="status" aria-live="polite">
             <div className="flex items-center gap-2 text-xs font-mono">
               <span className="font-bold text-[#E8472B]">
                 {selectedSeats.length} of 6 SEATS SELECTED
