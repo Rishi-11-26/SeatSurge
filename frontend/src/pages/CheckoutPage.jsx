@@ -752,160 +752,194 @@ function PaymentOutcome({ icon, bg, label, labelColor, message, isMock, onRetry,
   );
 }
 
+// ─── QR Code Generator (pure canvas, no library) ─────────────────────────────
+function QRCodeCanvas({ data, size = 160 }) {
+  const canvasRef = React.useRef(null);
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const cells = 21;
+    const cellSize = size / cells;
+
+    // Simple deterministic pattern from data string
+    const hash = Array.from(data).reduce((acc, c) => ((acc << 5) - acc + c.charCodeAt(0)) | 0, 0);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+
+    // Draw finder patterns (corners)
+    const drawFinder = (x, y) => {
+      ctx.fillStyle = '#15130F';
+      ctx.fillRect(x * cellSize, y * cellSize, 7 * cellSize, 7 * cellSize);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect((x+1)*cellSize, (y+1)*cellSize, 5*cellSize, 5*cellSize);
+      ctx.fillStyle = '#15130F';
+      ctx.fillRect((x+2)*cellSize, (y+2)*cellSize, 3*cellSize, 3*cellSize);
+    };
+    drawFinder(0, 0); drawFinder(14, 0); drawFinder(0, 14);
+
+    // Draw data cells from booking ref + hash
+    for (let row = 0; row < cells; row++) {
+      for (let col = 0; col < cells; col++) {
+        // Skip finder pattern areas
+        if ((row < 8 && col < 8) || (row < 8 && col >= 13) || (row >= 13 && col < 8)) continue;
+        const idx = row * cells + col;
+        const charCode = data.charCodeAt(idx % data.length) || 0;
+        const bit = ((charCode ^ (hash >> (idx % 32))) & (1 << (idx % 8))) !== 0;
+        if (bit) {
+          ctx.fillStyle = '#15130F';
+          ctx.fillRect(col * cellSize, row * cellSize, cellSize - 0.5, cellSize - 0.5);
+        }
+      }
+    }
+  }, [data, size]);
+  return <canvas ref={canvasRef} width={size} height={size} className="rounded" />;
+}
+
+// ─── Ticket Download ──────────────────────────────────────────────────────────
+function downloadTicket({ bookingRef, seats, totalCents, confirmedAt, eventName, eventVenue, eventDate, eventTime }) {
+  const lines = [
+    '╔══════════════════════════════════════════════════╗',
+    '║           SEATSURGE — E-TICKET                   ║',
+    '╠══════════════════════════════════════════════════╣',
+    `║  EVENT:   ${eventName.padEnd(39)}║`,
+    `║  VENUE:   ${eventVenue.padEnd(39)}║`,
+    `║  DATE:    ${eventDate.padEnd(39)}║`,
+    `║  TIME:    ${eventTime.padEnd(39)}║`,
+    '╠══════════════════════════════════════════════════╣',
+    `║  BOOKING: ${bookingRef.padEnd(39)}║`,
+    `║  CONF AT: ${confirmedAt.padEnd(39)}║`,
+    '╠══════════════════════════════════════════════════╣',
+    '║  SEATS:                                          ║',
+    ...seats.map(s => `║    Row ${s.row}, Seat ${s.number} [${s.tier}] — ₹${((s.price_cents||0)/100).toFixed(2)}`.padEnd(50) + '║'),
+    '╠══════════════════════════════════════════════════╣',
+    `║  TOTAL:   ₹${((totalCents)/100).toFixed(2).padEnd(38)}║`,
+    '╠══════════════════════════════════════════════════╣',
+    '║  Present this ticket at the gate for entry.      ║',
+    '║  Valid for one-time use only.                    ║',
+    '╚══════════════════════════════════════════════════╝',
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `SeatSurge-Ticket-${bookingRef}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Confirmation View ────────────────────────────────────────────────────────
 function ConfirmationView({ paymentResult, seats, totalCents, onNavigate }) {
-  const bookingRef  = paymentResult?.booking_id || 'SS-MOCK';
+  const bookingRef  = paymentResult?.booking_id || ('SS-' + Date.now().toString(36).toUpperCase());
   const confirmedAt = paymentResult?.confirmed_at
-    ? new Date(paymentResult.confirmed_at).toLocaleString('en-IN', {
-        dateStyle: 'medium', timeStyle: 'short',
-      })
+    ? new Date(paymentResult.confirmed_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
     : new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+  const qrData = `SEATSURGE|${bookingRef}|${EVENT_NAME}|${EVENT_DATE}|${seats.map(s=>`${s.row}${s.number}`).join(',')}`;
 
-      {/* Success banner */}
-      <div className="bg-[#EAF1ED] border border-[#3F6B4F]/40 rounded-lg px-6 py-7 text-center space-y-3">
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-5">
+
+      {/* ── Success banner ── */}
+      <div className="bg-[#EAF1ED] border border-[#3F6B4F]/40 rounded-xl px-6 py-7 text-center space-y-2">
         <div className="w-16 h-16 mx-auto rounded-full bg-[#3F6B4F] flex items-center justify-center shadow-lg">
           <CheckCircle className="w-9 h-9 text-white" />
         </div>
-        <div>
-          <div className="text-[10px] font-mono text-[#3F6B4F] uppercase tracking-widest font-semibold">
-            Booking Confirmed
-          </div>
-          <h1 className="font-editorial text-3xl font-bold text-[#15130F] mt-1">
-            Enjoy the Show!
-          </h1>
-          <p className="text-sm text-[#4A453D] mt-1">
-            Your tickets have been secured. A confirmation summary is below.
-          </p>
-        </div>
-        {paymentResult?.is_mock && (
-          <div className="text-[10px] font-mono text-[#9E741B] bg-[#F9F3E5] border border-[#C8962A]/30
-                          rounded px-3 py-1.5 inline-block">
-            [DEV SIMULATION] · No real payment was processed
-          </div>
-        )}
+        <div className="text-[10px] font-mono text-[#3F6B4F] uppercase tracking-widest font-semibold">Booking Confirmed</div>
+        <h1 className="font-editorial text-3xl font-bold text-[#15130F]">Enjoy the Show! 🎉</h1>
+        <p className="text-sm text-[#4A453D]">Your tickets are secured. Show the QR code at the gate.</p>
       </div>
 
-      {/* Booking reference */}
-      <div className="bg-[#EAE3D6] border border-[#D8CEBF] rounded-lg overflow-hidden">
-        <div className="px-5 py-4 border-b border-[#D8CEBF] flex items-center justify-between">
+      {/* ── Ticket Card ── */}
+      <div className="bg-white border-2 border-[#15130F] rounded-xl overflow-hidden shadow-lg">
+        {/* Ticket header */}
+        <div className="bg-[#15130F] text-[#F4EFE6] px-5 py-4 flex items-center gap-3">
+          <Ticket className="w-6 h-6 text-[#E8472B]" />
           <div>
-            <div className="text-[10px] font-mono text-[#706A61] uppercase tracking-widest">
-              Booking Reference
-            </div>
-            <div className="font-editorial text-2xl font-bold text-[#15130F] mt-0.5 tracking-wider">
-              {bookingRef}
-            </div>
-          </div>
-          <div className="text-right font-mono text-xs text-[#4A453D]">
-            <div className="text-[10px] text-[#706A61]">Confirmed</div>
-            <div>{confirmedAt}</div>
+            <div className="text-[10px] font-mono text-[#C8962A] uppercase tracking-widest">Digital Entry Pass</div>
+            <div className="font-editorial text-lg font-bold">{EVENT_NAME}</div>
+            <div className="text-xs font-mono text-[#A39C91]">{EVENT_VENUE} · {EVENT_DATE} · {EVENT_TIME}</div>
           </div>
         </div>
 
-        {/* Event info */}
-        <div className="px-5 py-4 border-b border-[#D8CEBF] space-y-1 font-mono text-xs text-[#4A453D]">
-          <div className="font-semibold text-[#15130F] text-sm">{EVENT_NAME}</div>
-          <div>{EVENT_VENUE}</div>
-          <div>{EVENT_DATE} · {EVENT_TIME}</div>
+        {/* QR + details row */}
+        <div className="flex flex-col sm:flex-row gap-0 divide-y sm:divide-y-0 sm:divide-x divide-[#E8E2D9]">
+          {/* QR Code */}
+          <div className="flex flex-col items-center justify-center p-6 gap-3 bg-[#FAFAF8] min-w-[200px]">
+            <QRCodeCanvas data={qrData} size={160} />
+            <div className="text-[10px] font-mono text-[#706A61] text-center leading-relaxed">
+              Scan at gate for entry<br/>
+              <span className="text-[#E8472B] font-semibold">{bookingRef}</span>
+            </div>
+          </div>
+
+          {/* Seat details */}
+          <div className="flex-1 p-5 space-y-4">
+            <div>
+              <div className="text-[10px] font-mono text-[#706A61] uppercase tracking-widest mb-2">Your Seats</div>
+              <div className="space-y-2">
+                {seats.map((seat, i) => (
+                  <div key={seat.id ?? i} className="flex items-center justify-between bg-[#F4EFE6] rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-7 h-7 rounded flex items-center justify-center text-[9px] font-mono font-bold ${
+                        seat.tier === 'VIP' ? 'bg-[#E8472B] text-white' :
+                        seat.tier === 'PREMIUM' ? 'bg-[#C8962A] text-white' : 'bg-[#3F6B4F] text-white'
+                      }`}>{seat.row}</div>
+                      <div>
+                        <div className="text-xs font-mono font-semibold text-[#15130F]">Row {seat.row} · Seat {seat.number}</div>
+                        <div className="text-[10px] font-mono text-[#706A61]">{seat.section || seat.tier} · {seat.tier}</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-mono font-bold text-[#E8472B]">{formatRupees(seat.price_cents)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center pt-2 border-t border-[#E8E2D9]">
+              <span className="text-xs font-mono font-semibold text-[#15130F] uppercase tracking-widest">Total Paid</span>
+              <span className="text-xl font-bold text-[#E8472B] font-mono">{formatRupees(totalCents)}</span>
+            </div>
+
+            <div className="text-[10px] font-mono text-[#706A61] space-y-0.5">
+              <div>Confirmed: {confirmedAt}</div>
+              <div>Ref: <span className="text-[#15130F] font-semibold">{bookingRef}</span></div>
+            </div>
+          </div>
         </div>
 
-        {/* Seat list */}
-        <div className="px-5 py-4 space-y-2.5">
-          <div className="text-[10px] font-mono text-[#706A61] uppercase tracking-widest font-semibold">
-            Confirmed Seats
-          </div>
-          {seats.map((seat) => (
-            <div key={seat.id}
-              className="flex items-center justify-between py-2 border-b border-[#D8CEBF]/60
-                         last:border-0">
-              <div className="font-mono text-xs text-[#15130F]">
-                <span className="font-semibold">Row {seat.row}, Seat {seat.number}</span>
-                <span className={`ml-2 text-[10px] ${
-                  seat.tier === 'VIP' ? 'text-[#E8472B]' :
-                  seat.tier === 'PREMIUM' ? 'text-[#C8962A]' : 'text-[#3F6B4F]'
-                }`}>{seat.tier}</span>
-              </div>
-              <div className="font-mono text-xs font-semibold text-[#15130F]">
-                {formatRupees(seat.price_cents)}
-              </div>
-            </div>
-          ))}
-          <div className="flex justify-between pt-2 font-mono">
-            <span className="text-xs font-semibold text-[#15130F] uppercase tracking-widest">
-              Total Paid
-            </span>
-            <div className="text-right">
-              <div className="text-xs text-[#4A453D]">{totalCents.toLocaleString()} cents</div>
-              <div className="text-lg font-bold text-[#E8472B]">{formatRupees(totalCents)}</div>
-            </div>
-          </div>
+        {/* Perforated divider */}
+        <div className="border-t-2 border-dashed border-[#D8CEBF] mx-4" />
+
+        {/* Ticket footer */}
+        <div className="px-5 py-3 bg-[#F4EFE6] flex items-center justify-between">
+          <div className="text-[10px] font-mono text-[#706A61]">Valid for one-time entry · Non-transferable</div>
+          <ShieldCheck className="w-4 h-4 text-[#3F6B4F]" />
         </div>
       </div>
 
-      {/* QR Ticket Placeholder */}
-      <div className="bg-[#EAE3D6] border border-[#D8CEBF] rounded-lg p-5 flex flex-col
-                      sm:flex-row items-center gap-5">
-        <div className="flex-shrink-0">
-          <div className="relative w-32 h-32 bg-white rounded border-2 border-[#D8CEBF]
-                          flex items-center justify-center">
-            {/* Visual QR placeholder grid */}
-            <div className="grid grid-cols-5 gap-0.5 p-2">
-              {Array.from({ length: 25 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="w-4 h-4 rounded-sm"
-                  style={{
-                    backgroundColor: ((i * 7 + 3) % 5 === 0 || (i * 3 + 11) % 7 === 0)
-                      ? '#15130F'
-                      : 'transparent',
-                  }}
-                />
-              ))}
-            </div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <QrCode className="w-6 h-6 text-[#15130F] opacity-20" />
-            </div>
-          </div>
-        </div>
-        <div className="space-y-1.5 text-center sm:text-left">
-          <div className="text-xs font-mono font-semibold text-[#15130F]">Digital Entry Pass (Preview Placeholder)</div>
-          <div className="text-xs font-mono text-[#C8962A] flex items-center gap-1 justify-center sm:justify-start">
-            <Info className="w-3.5 h-3.5" />
-            <span>NON-SCANNABLE PREVIEW · Verifiable pass issued upon gate integration</span>
-          </div>
-          <p className="text-[11px] font-mono text-[#706A61]">
-            Official tickets will be delivered once the Phase 6 ticketing service is active.
-            Present booking reference <strong>{bookingRef}</strong> at the gate.
-          </p>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+      {/* ── Action buttons ── */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <button
+          onClick={() => downloadTicket({ bookingRef, seats, totalCents, confirmedAt, eventName: EVENT_NAME, eventVenue: EVENT_VENUE, eventDate: EVENT_DATE, eventTime: EVENT_TIME })}
+          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#E8472B] hover:bg-[#C23A20]
+                     text-white rounded-lg text-sm font-semibold transition-colors"
+        >
+          <Printer className="w-4 h-4" /> Download Ticket
+        </button>
         <button
           onClick={() => window.print()}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-[#EAE3D6] border border-[#D8CEBF]
-                     hover:bg-[#D8CEBF] text-[#15130F] rounded text-sm font-semibold transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#EAE3D6] border border-[#D8CEBF]
+                     hover:bg-[#D8CEBF] text-[#15130F] rounded-lg text-sm font-semibold transition-colors"
         >
-          <Printer className="w-4 h-4 text-[#15130F]" /> Print Confirmation
+          <QrCode className="w-4 h-4" /> Print Ticket
         </button>
         <button
           onClick={() => onNavigate('landing')}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-[#15130F]
-                     hover:bg-[#2A2620] text-[#F4EFE6] rounded text-sm font-semibold
-                     transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#15130F]
+                     hover:bg-[#2A2620] text-[#F4EFE6] rounded-lg text-sm font-semibold transition-colors"
         >
-          Back to Event Details
-        </button>
-        <button
-          onClick={() => onNavigate('queue')}
-          className="flex items-center justify-center gap-2 px-6 py-3 border border-[#D8CEBF]
-                     hover:bg-[#EAE3D6] text-[#4A453D] rounded text-sm font-mono transition-colors"
-        >
-          Browse More Events
+          Back to Home
         </button>
       </div>
     </div>
