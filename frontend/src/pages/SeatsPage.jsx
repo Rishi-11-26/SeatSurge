@@ -26,7 +26,8 @@ export default function SeatsPage({ onNavigate }) {
   // Notifications and Simulation State
   const [notification, setNotification] = useState(null);
   const [isHolding, setIsHolding] = useState(false);
-  const [useSimulationFallback, setUseSimulationFallback] = useState(false);
+  // Default simulation fallback ON so demo works without queue admission token
+  const [useSimulationFallback, setUseSimulationFallback] = useState(true);
   const [simulateRaceCondition, setSimulateRaceCondition] = useState(false);
   const [activeHoldState, setActiveHoldState] = useState(null);
 

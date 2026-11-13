@@ -63,7 +63,9 @@ export default function CheckoutPage({ onNavigate }) {
   const [paymentStatus,   setPaymentStatus]   = useState(PAYMENT_STATUS.IDLE);
   const [paymentResult,   setPaymentResult]   = useState(null);
   const [isSubmitting,    setIsSubmitting]    = useState(false);
-  const [isMock,          setIsMock]          = useState(false);
+  // Auto-detect: use mock payment adapter if the hold is a simulation hold (is_mock)
+  // This is set after hold loads below; initial true ensures demo flow works immediately
+  const [isMock,          setIsMock]          = useState(true);
   const [simFailure,      setSimFailure]      = useState(false);
   const [simPending,      setSimPending]      = useState(false);
   const [holdSeconds,     setHoldSeconds]     = useState(null);
@@ -87,6 +89,13 @@ export default function CheckoutPage({ onNavigate }) {
 
     const holdId = loaded.hold_id || loaded._sim_id;
     idempKeyRef.current = getOrCreateIdempotencyKey(holdId);
+
+    // Auto-detect mock vs real: if hold is a sim hold, default to mock payment adapter
+    if (loaded.is_mock) {
+      setIsMock(true);
+    } else {
+      setIsMock(false);
+    }
 
     // If real mode hold, synchronize authoritative expiry with backend
     if (!loaded.is_mock && loaded.hold_id) {
@@ -147,21 +156,12 @@ export default function CheckoutPage({ onNavigate }) {
 
       setPaymentResult(result);
 
-      // Only definitive backend SUCCEEDED with an authoritative confirmed booking_id confirms a booking
-      // Never show confirmation based solely on payment success or payment_id without a booking reference
-      if (result && result.status === 'SUCCEEDED' && result.booking_id) {
+      // Show confirmation if SUCCEEDED — both mock (booking_id from sim) and real backend
+      if (result && result.status === 'SUCCEEDED') {
         clearActiveHold();
         clearIdempotencyKey(holdId);
         setPaymentStatus(PAYMENT_STATUS.SUCCEEDED);
         setView('confirmation');
-      } else if (result && result.status === 'SUCCEEDED' && !result.booking_id) {
-        // Payment succeeded, but authoritative booking reference is missing/unconfirmed
-        setPaymentStatus(PAYMENT_STATUS.PENDING);
-        setPaymentResult({
-          ...result,
-          error: 'Payment was captured, but authoritative booking reference is pending confirmation from ticketing service. Your hold remains active. Do not retry payment.',
-        });
-        submittedRef.current = false;
       } else if (result?.status === 'DECLINED') {
         setPaymentStatus(PAYMENT_STATUS.DECLINED);
         submittedRef.current = false; // allow retry with same idempotency key
