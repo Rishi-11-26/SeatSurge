@@ -50,7 +50,7 @@ export default function SelectedSeatsSummary({
               <span className="text-[#706A61]">·</span>
               {adjacency.valid ? (
                 <span className="text-[#3F6B4F] flex items-center gap-1 font-semibold text-[11px]">
-                  <ShieldCheck className="w-3.5 h-3.5" /> VALID ADJACENT GROUP
+                  <ShieldCheck className="w-3.5 h-3.5" /> SEATS CONFIRMED
                 </span>
               ) : (
                 <span className="text-[#E8472B] flex items-center gap-1 font-semibold text-[11px]">

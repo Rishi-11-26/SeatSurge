@@ -207,7 +207,7 @@ export async function loadSeatMap(eventId = 1, { mode = 'auto' } = {}) {
 }
 
 /**
- * Validate Adjacent Group Selection (Up to 6 continuous seats in the same row)
+ * Validate Group Selection (Up to 6 seats)
  */
 export function validateGroupAdjacency(selectedSeats) {
   if (!selectedSeats || selectedSeats.length === 0) {
@@ -219,31 +219,6 @@ export function validateGroupAdjacency(selectedSeats) {
       valid: false,
       error: 'Maximum 6 seats per transaction exceeded.',
     };
-  }
-
-  if (selectedSeats.length === 1) {
-    return { valid: true, error: null };
-  }
-
-  // All seats must belong to the exact same row
-  const firstRow = selectedSeats[0].row;
-  const sameRow = selectedSeats.every(s => s.row === firstRow);
-  if (!sameRow) {
-    return {
-      valid: false,
-      error: 'Group selection must belong to the exact same row.',
-    };
-  }
-
-  // Sort numbers in ascending order
-  const numbers = selectedSeats.map(s => s.number).sort((a, b) => a - b);
-  for (let i = 0; i < numbers.length - 1; i++) {
-    if (numbers[i + 1] !== numbers[i] + 1) {
-      return {
-        valid: false,
-        error: `Seats in row ${firstRow} must be strictly adjacent (continuous numbers).`,
-      };
-    }
   }
 
   return { valid: true, error: null };

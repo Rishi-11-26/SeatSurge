@@ -25,26 +25,6 @@ export default function LandingPage({ onNavigate }) {
 
   return (
     <div className="space-y-0">
-      {/* Notice Banner: Data Classification & Authoritative Backend Spec */}
-      <div className="bg-[#EAE3D6] border-b border-[#D8CEBF] px-4 py-2">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono text-[#4A453D]">
-          <div className="flex items-center gap-2">
-            <Info className="w-4 h-4 text-[#C8962A] flex-shrink-0" />
-            <span>
-              <strong>Phase F5 Real Integration:</strong> Authoritative 5,040 seats (240 VIP · 1,200 PREMIUM · 3,600 STANDARD). REST client + RFC 6455 WebSocket connected.
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-[11px] text-[#706A61]">
-            <span className="flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${activeEvent.isLive ? 'bg-[#3F6B4F] animate-pulse' : 'bg-[#C8962A]'}`} />
-              {activeEvent.isLive ? 'LIVE EVENT METADATA' : 'STANDBY MODE'}
-            </span>
-            <span>·</span>
-            <span>GATEWAY: :8000</span>
-          </div>
-        </div>
-      </div>
-
       {/* 1. Event Hero Section */}
       <EventHero event={activeEvent} onNavigate={onNavigate} />
 

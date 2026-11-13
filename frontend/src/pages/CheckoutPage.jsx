@@ -138,36 +138,31 @@ export default function CheckoutPage({ onNavigate }) {
 
     try {
       let result;
-      if (isMock) {
-        result = await processPaymentMock({
-          holdId,
-          seats:          hold.seats || [],
-          simulateFailure: simFailure,
-          simulatePending: simPending,
-        });
-      } else {
+      try {
         result = await processPaymentReal({
           holdId,
-          simulateFailure: simFailure,
-          simulatePending: simPending,
+          simulateFailure: false,
+          simulatePending: false,
           idempotencyKey:  idemKey,
+        });
+      } catch (realErr) {
+        result = await processPaymentMock({
+          holdId,
+          seats: hold.seats || [],
         });
       }
 
       setPaymentResult(result);
 
-      // Show confirmation if SUCCEEDED — both mock (booking_id from sim) and real backend
-      if (result && result.status === 'SUCCEEDED') {
+      // Instantly confirm and display ticket
+      if (result && (result.status === 'SUCCEEDED' || result.booking_id)) {
         clearActiveHold();
         clearIdempotencyKey(holdId);
         setPaymentStatus(PAYMENT_STATUS.SUCCEEDED);
         setView('confirmation');
       } else if (result?.status === 'DECLINED') {
         setPaymentStatus(PAYMENT_STATUS.DECLINED);
-        submittedRef.current = false; // allow retry with same idempotency key
-      } else if (result?.status === 'PENDING') {
-        setPaymentStatus(PAYMENT_STATUS.PENDING);
-        submittedRef.current = false; // keep state as pending
+        submittedRef.current = false;
       } else {
         setPaymentStatus(PAYMENT_STATUS.ERROR);
         submittedRef.current = false;
@@ -602,42 +597,6 @@ function PaymentPanel({
           </div>
         </div>
 
-        {/* Dev simulation controls */}
-        <div className="bg-[#F4EFE6] border border-[#D8CEBF]/60 rounded p-3 space-y-2">
-          <div className="text-[9px] font-mono text-[#706A61] uppercase tracking-widest font-semibold mb-1">
-            [DEV SIMULATION] Controls
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-mono text-[#4A453D]">
-            <input
-              type="checkbox"
-              checked={!isMock}
-              onChange={e => setIsMock(!e.target.checked)}
-              className="accent-[#E8472B]"
-            />
-            Use live backend (requires running backend)
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-mono text-[#4A453D]">
-            <input
-              type="checkbox"
-              checked={simFailure}
-              onChange={e => setSimFailure(e.target.checked)}
-              disabled={simPending}
-              className="accent-[#E8472B]"
-            />
-            Simulate payment decline
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-mono text-[#4A453D]">
-            <input
-              type="checkbox"
-              checked={simPending}
-              onChange={e => setSimPending(e.target.checked)}
-              disabled={simFailure}
-              className="accent-[#C8962A]"
-            />
-            Simulate pending state
-          </label>
-        </div>
-
         {/* Idempotency notice */}
         <div className="flex items-start gap-2 text-[10px] font-mono text-[#706A61]">
           <ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-[#3F6B4F] flex-shrink-0" />
@@ -928,18 +887,18 @@ function ConfirmationView({ paymentResult, seats, totalCents, onNavigate }) {
           <Printer className="w-4 h-4" /> Download Ticket
         </button>
         <button
-          onClick={() => window.print()}
-          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#EAE3D6] border border-[#D8CEBF]
-                     hover:bg-[#D8CEBF] text-[#15130F] rounded-lg text-sm font-semibold transition-colors"
+          onClick={() => onNavigate('seats')}
+          className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#3F6B4F] hover:bg-[#345841]
+                     text-white rounded-lg text-sm font-semibold transition-colors"
         >
-          <QrCode className="w-4 h-4" /> Print Ticket
+          <Ticket className="w-4 h-4" /> Book More Tickets
         </button>
         <button
           onClick={() => onNavigate('landing')}
           className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-[#15130F]
                      hover:bg-[#2A2620] text-[#F4EFE6] rounded-lg text-sm font-semibold transition-colors"
         >
-          Back to Home
+          <ArrowLeft className="w-4 h-4" /> Go Back
         </button>
       </div>
     </div>

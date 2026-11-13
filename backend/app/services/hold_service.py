@@ -25,14 +25,8 @@ MAX_SEATS_PER_HOLD = 6
 
 def validate_group_adjacency(seats: List[Seat]) -> None:
     """
-    Validates that a group of requested seats are strictly adjacent in the same row.
-    - Single seats are trivially valid.
-    - Group holds (> 1 seat) must be on the same row.
-    - Seat numbers must be strictly consecutive (e.g. 101, 102, 103).
+    Validates seat limit per transaction (up to 6 seats).
     """
-    if len(seats) == 1:
-        return
-
     if len(seats) > MAX_SEATS_PER_HOLD:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -41,29 +35,7 @@ def validate_group_adjacency(seats: List[Seat]) -> None:
                 "message": f"Cannot hold more than {MAX_SEATS_PER_HOLD} seats in a single request.",
             },
         )
-
-    # 1. Verify all seats are in the exact same row
-    first_row = seats[0].row
-    if not all(s.row == first_row for s in seats):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "NOT_ADJACENT",
-                "message": "Group seats must all be located in the same row.",
-            },
-        )
-
-    # 2. Verify seat numbers are consecutive
-    sorted_numbers = sorted(s.number for s in seats)
-    for i in range(len(sorted_numbers) - 1):
-        if sorted_numbers[i + 1] != sorted_numbers[i] + 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "code": "NOT_ADJACENT",
-                    "message": "Group seats must have strictly consecutive seat numbers in the row.",
-                },
-            )
+    return
 
 
 class HoldService:

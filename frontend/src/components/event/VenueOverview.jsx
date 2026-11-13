@@ -25,7 +25,7 @@ export default function VenueOverview({ event, onNavigate }) {
           </div>
           <div className="text-xs font-mono text-[#706A61] flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#3F6B4F]"></span>
-            <span>All 34 Rows Synchronized via Redis Pub/Sub</span>
+            <span>Live Seating Available</span>
           </div>
         </div>
 
