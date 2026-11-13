@@ -49,11 +49,15 @@ async def lifespan(app: FastAPI):
             else:
                 logger.warning(f"Redis recovery: {status_val}. Reconstructing state using in-memory coordinator...")
                 from app.redis.client import set_redis_override
-                import fakeredis.aioredis as fake_aioredis
-                set_redis_override(fake_aioredis.FakeRedis(decode_responses=True))
-                await RedisRecoveryService.reconstruct_state_from_postgres(engine)
-                mark_recovery_complete()
-                logger.info("State reconstructed successfully using in-memory coordinator.")
+                try:
+                    import fakeredis.aioredis as fake_aioredis
+                    set_redis_override(fake_aioredis.FakeRedis(decode_responses=True))
+                    await RedisRecoveryService.reconstruct_state_from_postgres(engine)
+                    mark_recovery_complete()
+                    logger.info("State reconstructed successfully using in-memory coordinator.")
+                except Exception as fe:
+                    mark_recovery_skipped()
+                    logger.warning(f"Fallback coordinator not available: {fe}")
         except Exception as exc:
             logger.warning(f"External Redis recovery error ({exc}). Reconstructing state using in-memory coordinator...")
             try:

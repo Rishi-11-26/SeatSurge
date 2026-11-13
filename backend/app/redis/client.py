@@ -1,7 +1,10 @@
 import asyncio
 from typing import Optional
 import redis.asyncio as aioredis
-import fakeredis.aioredis as fake_aioredis
+try:
+    import fakeredis.aioredis as fake_aioredis
+except ImportError:
+    fake_aioredis = None
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -25,17 +28,23 @@ def init_redis_pool() -> aioredis.ConnectionPool:
         logger.info(f"Connecting to Redis at {masked_url}")
 
         try:
+            extra_kwargs = {}
+            if url.startswith("rediss://") or settings.REDIS_SSL or "upstash" in url.lower():
+                extra_kwargs["ssl_cert_reqs"] = None
+
             redis_pool = aioredis.ConnectionPool.from_url(
                 url,
                 max_connections=50,
                 decode_responses=True,
-                socket_connect_timeout=3.0,
-                socket_timeout=3.0,
+                socket_connect_timeout=5.0,
+                socket_timeout=5.0,
+                **extra_kwargs,
             )
             redis_client = aioredis.Redis(connection_pool=redis_pool)
         except Exception as exc:
             logger.warning(f"Could not connect to external Redis ({exc}). Falling back to in-memory coordinator.")
-            redis_client = fake_aioredis.FakeRedis(decode_responses=True)
+            if fake_aioredis is not None:
+                redis_client = fake_aioredis.FakeRedis(decode_responses=True)
             redis_pool = None
     return redis_pool
 
@@ -65,8 +74,10 @@ async def check_redis_health() -> bool:
         except Exception as exc:
             # If external Redis connection died or DNS failed, switch seamlessly to in-memory coordinator
             logger.warning(f"External Redis unreachable ({exc}). Switching to in-memory coordinator.")
-            redis_client = fake_aioredis.FakeRedis(decode_responses=True)
-            return True
+            if fake_aioredis is not None:
+                redis_client = fake_aioredis.FakeRedis(decode_responses=True)
+                return True
+            return False
     except Exception as exc:
         logger.warning(f"Redis health check failed: {exc}")
         return False
